@@ -1,0 +1,16 @@
+pydocstyle
+flake8
+
+fastapi[standard]>=0.121.3,<0.200.0
+pydantic-settings>=2.12.0,<3.0.0
+sqlalchemy[asyncio]>=2.0.0,<3.0.0
+alembic>=1.11.0,<2.0.0
+
+# db driver options
+aiosqlite>=0.20.0,<1.0.0
+# For PostgreSQL, uncomment the following line
+# asyncpg>=0.27.0,<1.0.0
+
+# Development tools
+pytest-asyncio>=1.3.0,<2.0.0
+ipython>=9.7.0,<10.0.0
