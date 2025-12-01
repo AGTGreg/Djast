@@ -6,37 +6,61 @@ Minimal Auth models based on:
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String
+from sqlalchemy import String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
 
 from djast.db import models
+from djast.utils.timezone import now
 
 
 class AbstractBaseUser(models.Model):
     """
-    A simple User Abstract.
+    A minimal User Abstract.
 
-    Design choices:
-    - Minimal
-    - Django compatible (but I don't really want first_name, last_name, etc. in AbstractBaseUser)
-    Consider fields: password, date_joined, last_login, first_name, last_name
+    This model provides the core fields and methods for a user model.
+    Uses `email` as the unique identifier for authentication instead of usernames.
     """
     __abstract__ = True
 
-    username: Mapped[str] = mapped_column(String(150), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
-    password: Mapped[str] = mapped_column(String(128))
-
     is_active: Mapped[bool] = mapped_column(default=True)
-    is_superuser: Mapped[bool] = mapped_column(default=False)
-
-    last_login: Mapped[Optional[datetime]] = mapped_column(default=None)
+    password: Mapped[str] = mapped_column(String(128))
+    date_joined: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=now,
+        server_default=func.now()
+    )
+    last_login: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        nullable=True
+    )
 
     def __repr__(self) -> str:
         return f"<User(username={self.username}, email={self.email})>"
 
 
-class User(AbstractBaseUser):
+class AbstractDjangoUser(AbstractBaseUser):
+    """
+    A Django compatible User model.
+
+    This model is designed to be compatible with Django's authentication system.
+    It includes all the necessary fields and methods to work seamlessly with Django.
+
+    Email is not unique in this model to align with Django's default behavior.
+    """
+    __abstract__ = True
+
+    username: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(254), default="")
+    first_name: Mapped[str] = mapped_column(String(150), default="")
+    last_name: Mapped[str] = mapped_column(String(150), default="")
+    is_staff: Mapped[bool] = mapped_column(default=False)
+    is_superuser: Mapped[bool] = mapped_column(default=False)
+
+
+class User(AbstractDjangoUser):
     """
     Minimal user.
     """
