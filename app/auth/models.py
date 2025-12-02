@@ -90,7 +90,7 @@ class AbstractBaseUser(models.Model):
         Returns:
             True if the password is correct, False otherwise.
         """
-        return await acheck_password(raw_password, self.password)
+        return await acheck_password(raw_password, self.password, setter=None)
 
 
 class AbstractDjangoUser(AbstractBaseUser):
