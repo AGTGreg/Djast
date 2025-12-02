@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     APP_PREFIX: str = "/api/v1"
 
+    SECRET_KEY: str = "your-secret-key"
+
     DEBUG: bool = True
     TIME_ZONE: str = "UTC"
 
@@ -39,6 +41,9 @@ class Settings(BaseSettings):
             "NAME": ROOT_DIR / "data.db",
         }
     }
+
+    # Password hashing: 'pbkdf2_sha256', 'pbkdf2_sha1', or 'argon2'
+    PASSWORD_HASHER: str = "pbkdf2_sha256"
 
 
 settings = Settings()
