@@ -15,6 +15,8 @@ from djast.database import get_async_session
 from auth.models import User, RefreshToken as DBRefreshToken
 from auth.schemas import Token, TokenData, UserRead
 
+from auth.utils.hashers import check_password
+
 
 oauth2_scheme = \
     OAuth2PasswordBearer(tokenUrl=f"{settings.APP_PREFIX}/auth/token")
@@ -46,6 +48,8 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
 async def authenticate_user(session: AsyncSession, username: str, password: str):
     user = await User.objects(session).get(username=username)
     if not user:
+        # Prevent timing attacks and user enumeration
+        await check_password(password=password, encoded="invalid", setter=None)
         return False
     if not await user.authenticate(session, password):
         return False

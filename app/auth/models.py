@@ -104,16 +104,18 @@ class AbstractBaseUser(models.Model):
         """
         Check password and update last_login on success.
         """
-        if not self.is_active:
-            return False
-
         async def rehash_setter(new_password: str) -> None:
             await self.set_password(new_password)
 
         is_correct = await check_password(
             raw_password, self.password, setter=rehash_setter)
+
+        if not self.is_active:
+            return False
+
         if is_correct:
             await self.update(session, last_login=dj_timezone.now())
+
         return is_correct
 
 
