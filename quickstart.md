@@ -263,7 +263,8 @@ async def update_author(
     author = await Author.objects(session).get(id=author_id)
     if not author:
         raise HTTPException(status_code=404, detail="Author not found")
-    return await Author.objects(session).update(author, **payload.model_dump(exclude_unset=True))
+    await author.update(session, **payload.model_dump(exclude_unset=True))
+    return author
 
 
 @router.delete("/authors/{author_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -271,7 +272,7 @@ async def delete_author(author_id: int, session: AsyncSession = Depends(get_asyn
     author = await Author.objects(session).get(id=author_id)
     if not author:
         raise HTTPException(status_code=404, detail="Author not found")
-    await Author.objects(session).delete(author)
+    await author.delete(session)
 
 
 # ─── Posts ───────────────────────────────────────────────────────────────────
@@ -310,7 +311,8 @@ async def update_post(
     post = await Post.objects(session).get(id=post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    return await Post.objects(session).update(post, **payload.model_dump(exclude_unset=True))
+    await post.update(session, **payload.model_dump(exclude_unset=True))
+    return post
 
 
 @router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -318,7 +320,7 @@ async def delete_post(post_id: int, session: AsyncSession = Depends(get_async_se
     post = await Post.objects(session).get(id=post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    await Post.objects(session).delete(post)
+    await post.delete(session)
 ```
 
 ---

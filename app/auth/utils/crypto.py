@@ -5,10 +5,9 @@ Original source: https://github.com/django/django/blob/stable/6.0.x/django/utils
 """
 
 import hashlib
-import hmac
 import secrets
 
-from djast.utils.encoding import force_bytes
+from auth.utils.encoding import force_bytes
 
 
 RANDOM_STRING_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

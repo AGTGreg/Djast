@@ -1,11 +1,16 @@
-"""
-Write your schemas here. You can create Pydantic models using the built-in
-`get_schema` method from your SQLAlchemy models.
+from pydantic import BaseModel
+from auth.models import User
 
-Example (Assuming that `Item` inherits from `models.Model`):
 
-from .models import Item
+UserInDB = User.get_schema()
+UserRead = User.get_schema(exclude={"password"})
 
-ItemCreate = Item.get_schema(exclude={"id"})
-ItemRead = Item.get_schema()
-"""
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    refresh_token: str
+
+
+class TokenData(BaseModel):
+    username: str | None = None

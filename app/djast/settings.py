@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -16,32 +18,28 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     TIME_ZONE: str = "UTC"
 
+    # Auth & Security settings
+    PASSWORD_HASHER: str = "pbkdf2_sha256"
+    SECRET_KEY: str = "change_me"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
     # Edit this in production to restrict CORS origins
     CORS_ALLOW_ORIGINS: list[str] = ["*"]
     CORS_ALLOW_METHODS: list[str] = ["*"]
     CORS_ALLOW_HEADERS: list[str] = ["*"]
     CORS_ALLOW_CREDENTIALS: bool = True
 
-    # PostgreSQL example
-    # DATABASES: dict = {
-    #     "default": {
-    #         "ENGINE": "postgresql+asyncpg",
-    #         "HOST": "localhost",
-    #         "PORT": 5432,
-    #         "NAME": "mydatabase",
-    #         "USER": "myuser",
-    #         "PASSWORD": "mypassword",
-    #     }
-    # }
     DATABASES: dict = {
         "default": {
-            "ENGINE": "sqlite",
-            "NAME": ROOT_DIR / "data.db",
+            "ENGINE": os.getenv("DB_ENGINE", "sqlite"),
+            "HOST": os.getenv("DB_HOST", None),
+            "PORT": os.getenv("DB_PORT", None),
+            "NAME": os.getenv("DB_NAME", "db.sqlite3"),
+            "USER": os.getenv("DB_USER", None),
+            "PASSWORD": os.getenv("DB_PASSWORD", None),
         }
     }
-
-    # Password hashing: 'pbkdf2_sha256', 'pbkdf2_sha1', or 'argon2'
-    PASSWORD_HASHER: str = "pbkdf2_sha256"
-
 
 settings = Settings()
