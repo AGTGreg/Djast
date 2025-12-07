@@ -34,7 +34,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
         expire = dj_timezone.now() + expires_delta
     else:
         expire = \
-            dj_timezone.now() + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+            dj_timezone.now() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(
         to_encode,
@@ -105,7 +105,7 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
@@ -133,7 +133,6 @@ async def refresh_token(
     refresh_token: Annotated[str, Body(embed=True)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
 ) -> Token:
-    # Find the refresh token in DB
     db_token = await DBRefreshToken.objects(session).get(key=refresh_token)
     if not db_token:
         raise HTTPException(
@@ -148,13 +147,13 @@ async def refresh_token(
 
     if token_expires < current_time:
         await db_token.delete(session)
+        await session.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user
     user = await User.objects(session).get(id=db_token.user_id, is_active=True)
     if not user:
         await db_token.delete(session)
@@ -165,7 +164,7 @@ async def refresh_token(
         )
 
     # Create new access token
-    access_token_expires = timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )

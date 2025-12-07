@@ -228,7 +228,7 @@ class RefreshToken(models.Model):
     """ Token model for storing authentication tokens
     """
     key: Mapped[str] = mapped_column(String(40), unique=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"))
     created: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=dj_timezone.now,

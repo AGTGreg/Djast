@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     PASSWORD_HASHER: str = "pbkdf2_sha256"
     SECRET_KEY: str = "change_me"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Edit this in production to restrict CORS origins
