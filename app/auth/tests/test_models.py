@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from djast.db.models import Base
-from auth.models import User, AbstractEmailUser
+from djast.settings import settings
+from auth.models import User, AbstractEmailUser, AbstractDjangoUser
 from auth.utils.hashers import check_password, is_password_usable
 
 # -----------------------------------------------------------------------------
@@ -23,6 +24,10 @@ from auth.utils.hashers import check_password, is_password_usable
 class ConcreteEmailUser(AbstractEmailUser):
     """Concrete model for testing AbstractEmailUser."""
     __tablename__ = "test_email_user"
+
+class ConcreteDjangoUser(AbstractDjangoUser):
+    """Concrete model for testing AbstractDjangoUser."""
+    __tablename__ = "test_django_user"
 
 
 # -----------------------------------------------------------------------------
@@ -69,7 +74,7 @@ class TestDjangoUser:
         email = "John@Example.com"
         password = "secure_password"
 
-        user = await User.create_user(
+        user = await ConcreteDjangoUser.create_user(
             session,
             username=username,
             email=email,
@@ -102,7 +107,7 @@ class TestDjangoUser:
         ]
 
         for i, (raw_email, expected_email) in enumerate(emails):
-            user = await User.create_user(
+            user = await ConcreteDjangoUser.create_user(
                 session,
                 username=f"user{i}",
                 password="password",
@@ -113,7 +118,7 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_authenticate_success(self, session):
         """Test successful authentication updates last_login."""
-        user = await User.create_user(session, "authuser", "correct_password")
+        user = await ConcreteDjangoUser.create_user(session, "authuser", "correct_password")
         original_last_login = user.last_login
         assert original_last_login is None
 
@@ -127,7 +132,7 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_authenticate_failure(self, session):
         """Test failed authentication does not update last_login."""
-        user = await User.create_user(session, "failuser", "correct_password")
+        user = await ConcreteDjangoUser.create_user(session, "failuser", "correct_password")
 
         is_authenticated = await user.authenticate(session, "wrong_password")
 
@@ -137,7 +142,7 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_authenticate_inactive_user(self, session):
         """Test that inactive users cannot authenticate."""
-        user = await User.create_user(
+        user = await ConcreteDjangoUser.create_user(
             session,
             "inactive",
             "password",
@@ -152,7 +157,7 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_set_password(self, session):
         """Test setting a new password."""
-        user = await User.create_user(session, "resetuser", "old_password")
+        user = await ConcreteDjangoUser.create_user(session, "resetuser", "old_password")
         old_hash = user.password
 
         await user.set_password("new_password")
@@ -165,7 +170,7 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_unusable_password(self, session):
         """Test setting and checking unusable passwords."""
-        user = await User.create_user(session, "nouser", "password")
+        user = await ConcreteDjangoUser.create_user(session, "nouser", "password")
 
         await user.set_unusable_password()
         await user.save(session)

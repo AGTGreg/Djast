@@ -4,7 +4,7 @@ import secrets
 from typing import Annotated
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,37 @@ oauth2_scheme = \
     OAuth2PasswordBearer(tokenUrl=f"{settings.APP_PREFIX}/auth/token")
 
 router = APIRouter()
+
+
+class OAuth2EmailRequestForm:
+    """
+    This is a dependency class, use it like:
+    `def login(form_data: OAuth2EmailRequestForm = Depends())`
+    It creates a form that requests `email` and `password`.
+    """
+    def __init__(
+        self,
+        grant_type: str = Form(default=None, pattern="password"),
+        email: str = Form(),
+        password: str = Form(),
+        scope: str = Form(default=""),
+        client_id: str | None = Form(default=None),
+        client_secret: str | None = Form(default=None),
+    ):
+        self.grant_type = grant_type
+        # OAuth2 spec requires 'username' field. We map email to it
+        # so downstream code remains generic.
+        self.username = email
+        self.password = password
+        self.scopes = scope.split()
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+
+if settings.AUTH_USER_MODEL_TYPE == "email":
+    LoginForm = OAuth2EmailRequestForm
+else:
+    LoginForm = OAuth2PasswordRequestForm
 
 
 def create_refresh_token() -> str:
@@ -46,7 +77,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
 
 
 async def authenticate_user(session: AsyncSession, username: str, password: str):
-    user = await User.objects(session).get(username=username)
+    user = await User.objects(session).get(**{User.USERNAME_FIELD: username})
     if not user:
         # Prevent timing attacks and user enumeration
         await check_password(password=password, encoded="invalid", setter=None)
@@ -74,11 +105,11 @@ async def get_current_user(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        token_data = TokenData(sub=username)
     except InvalidTokenError:
         raise credentials_exception
 
-    user = await User.objects(session).get(username=token_data.username)
+    user = await User.objects(session).get(**{User.USERNAME_FIELD: token_data.sub})
     if user is None:
         raise credentials_exception
     return user
@@ -94,7 +125,7 @@ async def get_current_active_user(
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    form_data: Annotated[LoginForm, Depends()],
     session: Annotated[AsyncSession, Depends(get_async_session)]
 ) -> Token:
     user = await authenticate_user(
@@ -107,7 +138,7 @@ async def login_for_access_token(
         )
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": getattr(user, User.USERNAME_FIELD)}, expires_delta=access_token_expires
     )
 
     refresh_token = create_refresh_token()
@@ -145,6 +176,10 @@ async def refresh_token(
     current_time = dj_timezone.now()
     token_expires = db_token.expires_at
 
+    # Handle naive datetime from SQLite
+    if token_expires.tzinfo is None:
+        token_expires = token_expires.replace(tzinfo=current_time.tzinfo)
+
     if token_expires < current_time:
         await db_token.delete(session)
         await session.commit()
@@ -166,7 +201,7 @@ async def refresh_token(
     # Create new access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": getattr(user, User.USERNAME_FIELD)}, expires_delta=access_token_expires
     )
 
     # Rotate refresh token

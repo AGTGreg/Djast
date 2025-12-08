@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from djast.settings import settings
 from djast.db import models
 from djast.utils import timezone as dj_timezone
 from auth.utils.hashers import (
@@ -128,6 +129,8 @@ class AbstractEmailUser(AbstractBaseUser):
     """
     __abstract__ = True
 
+    USERNAME_FIELD = 'email'
+
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
 
     def __repr__(self) -> str:
@@ -172,6 +175,8 @@ class AbstractDjangoUser(AbstractBaseUser):
     Email is not unique in this model to align with Django's default behavior.
     """
     __abstract__ = True
+
+    USERNAME_FIELD = 'username'
 
     username: Mapped[str] = mapped_column(String(150), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(254), default="")
@@ -218,10 +223,16 @@ class AbstractDjangoUser(AbstractBaseUser):
         )
 
 
-class User(AbstractDjangoUser):
-    """ Use this User model for authentication
-    """
-    pass
+if settings.AUTH_USER_MODEL_TYPE == "email":
+    class User(AbstractEmailUser):
+        """ Use this User model for authentication
+        """
+        pass
+else:
+    class User(AbstractDjangoUser):
+        """ Use this User model for authentication
+        """
+        pass
 
 
 class RefreshToken(models.Model):

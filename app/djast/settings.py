@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Choose between 'django' and 'email' user models. Default is 'django'
+    # which is compatible with Django's default users uses username for
+    # authentication.
+    # !! IMPORTANT !! This setting will change the table for the User model.
+    AUTH_USER_MODEL_TYPE: str = "django"  # or "email"
+
     # Edit this in production to restrict CORS origins
     CORS_ALLOW_ORIGINS: list[str] = ["*"]
     CORS_ALLOW_METHODS: list[str] = ["*"]
