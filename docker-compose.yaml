@@ -1,8 +1,22 @@
 services:
 
+  redis:
+    image: "redis:8.0-alpine"
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   app:
     build:
       context: ./app
+    depends_on:
+      - redis
     volumes:
       - ./app:/app
       - app_volume:/vol/app
@@ -14,3 +28,4 @@ services:
 
 volumes:
   app_volume:
+  redis_data:

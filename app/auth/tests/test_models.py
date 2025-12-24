@@ -72,7 +72,7 @@ class TestDjangoUser:
         """Test creating a user with username, email, and password."""
         username = "johndoe"
         email = "John@Example.com"
-        password = "secure_password"
+        password = "StrongPassword123!"
 
         user = await ConcreteDjangoUser.create_user(
             session,
@@ -110,7 +110,7 @@ class TestDjangoUser:
             user = await ConcreteDjangoUser.create_user(
                 session,
                 username=f"user{i}",
-                password="password",
+                password="StrongPassword123!",
                 email=raw_email
             )
             assert user.email == expected_email
@@ -118,12 +118,12 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_authenticate_success(self, session):
         """Test successful authentication updates last_login."""
-        user = await ConcreteDjangoUser.create_user(session, "authuser", "correct_password")
+        user = await ConcreteDjangoUser.create_user(session, "authuser", "StrongPassword123!")
         original_last_login = user.last_login
         assert original_last_login is None
 
         # Authenticate
-        is_authenticated = await user.authenticate(session, "correct_password")
+        is_authenticated = await user.authenticate(session, "StrongPassword123!")
 
         assert is_authenticated is True
         assert user.last_login is not None
@@ -132,7 +132,7 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_authenticate_failure(self, session):
         """Test failed authentication does not update last_login."""
-        user = await ConcreteDjangoUser.create_user(session, "failuser", "correct_password")
+        user = await ConcreteDjangoUser.create_user(session, "failuser", "StrongPassword123!")
 
         is_authenticated = await user.authenticate(session, "wrong_password")
 
@@ -145,11 +145,11 @@ class TestDjangoUser:
         user = await ConcreteDjangoUser.create_user(
             session,
             "inactive",
-            "password",
+            "StrongPassword123!",
             is_active=False
         )
 
-        is_authenticated = await user.authenticate(session, "password")
+        is_authenticated = await user.authenticate(session, "StrongPassword123!")
 
         assert is_authenticated is False
         assert user.last_login is None
@@ -157,20 +157,20 @@ class TestDjangoUser:
     @pytest.mark.asyncio
     async def test_set_password(self, session):
         """Test setting a new password."""
-        user = await ConcreteDjangoUser.create_user(session, "resetuser", "old_password")
+        user = await ConcreteDjangoUser.create_user(session, "resetuser", "StrongPassword123!")
         old_hash = user.password
 
-        await user.set_password("new_password")
+        await user.set_password("NewStrongPassword123!")
         await user.save(session)
 
         assert user.password != old_hash
-        assert await user.authenticate(session, "new_password") is True
-        assert await user.authenticate(session, "old_password") is False
+        assert await user.authenticate(session, "NewStrongPassword123!") is True
+        assert await user.authenticate(session, "StrongPassword123!") is False
 
     @pytest.mark.asyncio
     async def test_unusable_password(self, session):
         """Test setting and checking unusable passwords."""
-        user = await ConcreteDjangoUser.create_user(session, "nouser", "password")
+        user = await ConcreteDjangoUser.create_user(session, "nouser", "StrongPassword123!")
 
         await user.set_unusable_password()
         await user.save(session)
@@ -179,7 +179,7 @@ class TestDjangoUser:
         assert is_password_usable(user.password) is False
 
         # Authentication should fail
-        assert await user.authenticate(session, "password") is False
+        assert await user.authenticate(session, "StrongPassword123!") is False
         assert await user.authenticate(session, "") is False
 
 
@@ -194,7 +194,7 @@ class TestAbstractEmailUser:
     async def test_create_email_user(self, session):
         """Test creating an email-based user."""
         email = "EmailUser@Example.ORG"
-        password = "emailpassword"
+        password = "StrongPassword123!"
 
         user = await ConcreteEmailUser.create_user(
             session,
@@ -217,7 +217,7 @@ class TestAbstractEmailUser:
         user = await ConcreteEmailUser.create_user(
             session,
             email="MixedCase@Domain.Com",
-            password="pass"
+            password="StrongPassword123!"
         )
         assert user.email == "MixedCase@domain.com"
 
@@ -226,7 +226,7 @@ class TestAbstractEmailUser:
         """Test that email must be unique."""
         from sqlalchemy.exc import IntegrityError
 
-        await ConcreteEmailUser.create_user(session, email="unique@test.com", password="p1")
+        await ConcreteEmailUser.create_user(session, email="unique@test.com", password="StrongPassword123!")
 
         with pytest.raises(IntegrityError):
-            await ConcreteEmailUser.create_user(session, email="unique@test.com", password="p2")
+            await ConcreteEmailUser.create_user(session, email="unique@test.com", password="StrongPassword123!")

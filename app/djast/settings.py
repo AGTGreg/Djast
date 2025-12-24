@@ -18,25 +18,6 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     TIME_ZONE: str = "UTC"
 
-    # Auth & Security settings
-    PASSWORD_HASHER: str = "pbkdf2_sha256"
-    SECRET_KEY: str = "change_me"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-
-    # Choose between 'django' and 'email' user models. Default is 'django'
-    # which is compatible with Django's default users uses username for
-    # authentication.
-    # !! IMPORTANT !! This setting will change the table for the User model.
-    AUTH_USER_MODEL_TYPE: str = "django"  # or "email"
-
-    # Edit this in production to restrict CORS origins
-    CORS_ALLOW_ORIGINS: list[str] = ["*"]
-    CORS_ALLOW_METHODS: list[str] = ["*"]
-    CORS_ALLOW_HEADERS: list[str] = ["*"]
-    CORS_ALLOW_CREDENTIALS: bool = True
-
     DATABASES: dict = {
         "default": {
             "ENGINE": os.getenv("DB_ENGINE", "sqlite"),
@@ -47,5 +28,78 @@ class Settings(BaseSettings):
             "PASSWORD": os.getenv("DB_PASSWORD", None),
         }
     }
+
+    REDIS_URL: str = "redis://redis:6379/1"
+
+    # Auth & Security settings ================================================
+    PASSWORD_HASHER: str = "pbkdf2_sha256"
+    SECRET_KEY: str = "change_me"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Allow a short window where a refresh token that was just rotated may be
+    # presented again (e.g., concurrent requests / retries). Within this
+    # window, the server treats it as a duplicate and returns the replacement
+    # refresh token rather than revoking sessions.
+    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = 5
+    ALLOW_SIGNUP: bool = True
+
+    # Regex for password strength validation:
+    # At least 8 characters and up to 100, one uppercase, one lowercase,
+    # one number and one special character
+    PASSWORD_VALIDATION_REGEX: str = r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,100}$"
+
+    # Choose between 'django' and 'email' user models. Default is 'django'
+    # which is compatible with Django's default users uses username for
+    # authentication.
+    # !! IMPORTANT !! This setting will change the table for the User model.
+    AUTH_USER_MODEL_TYPE: str = "django"  # or "email"
+
+    # CORS defaults
+    # - Developer-friendly in DEBUG (permits common localhost front-ends)
+    # - Locked down in production unless explicitly configured
+    CORS_ALLOW_ORIGINS: list[str] = []
+    CORS_ALLOW_METHODS: list[str] = [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ]
+    CORS_ALLOW_HEADERS: list[str] = [
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+    ]
+    CORS_ALLOW_CREDENTIALS: bool = True
+    # /Auth & Security settings ===============================================
+
+    def model_post_init(self, __context) -> None:
+        # If the user didn't explicitly configure origins, provide safe defaults.
+        if "CORS_ALLOW_ORIGINS" not in getattr(self, "model_fields_set", set()):
+            if self.DEBUG:
+                self.CORS_ALLOW_ORIGINS = [
+                    "http://localhost",
+                    "http://localhost:3000",
+                    "http://localhost:5173",
+                    "http://127.0.0.1",
+                    "http://127.0.0.1:3000",
+                    "http://127.0.0.1:5173",
+                    "https://localhost",
+                    "https://localhost:3000",
+                    "https://localhost:5173",
+                    "https://127.0.0.1",
+                    "https://127.0.0.1:3000",
+                    "https://127.0.0.1:5173",
+                ]
+            else:
+                self.CORS_ALLOW_ORIGINS = []
+
+        if self.CORS_ALLOW_CREDENTIALS and any(origin == "*" for origin in self.CORS_ALLOW_ORIGINS):
+            raise ValueError(
+                "Invalid CORS config: CORS_ALLOW_ORIGINS cannot contain '*' when CORS_ALLOW_CREDENTIALS is True."
+            )
 
 settings = Settings()

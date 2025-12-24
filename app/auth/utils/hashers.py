@@ -88,20 +88,6 @@ def verify_password(password: str | None, encoded: str, preferred: str = "defaul
     return is_correct, must_update
 
 
-def _check_password(password: str, encoded: str, setter: Callable[[str], None] | None = None, preferred: str = "default") -> bool:
-    """
-    Return a boolean of whether the raw password matches the three part encoded
-    digest.
-
-    If setter is specified, it'll be called when you need to regenerate the
-    password.
-    """
-    is_correct, must_update = verify_password(password, encoded, preferred=preferred)
-    if setter and is_correct and must_update:
-        setter(password)
-    return is_correct
-
-
 async def check_password(password: str, encoded: str, setter: Callable[[str], Any] | None = None, preferred: str = "default") -> bool:
     """
     Async version of check_password().

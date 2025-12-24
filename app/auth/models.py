@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from djast.settings import settings
 from djast.db import models
 from djast.utils import timezone as dj_timezone
+from auth.utils.password_validators import check_password_strength
 from auth.utils.hashers import (
     make_password,
     check_password,
@@ -67,6 +68,7 @@ class AbstractBaseUser(models.Model):
         Returns:
             The newly created user instance.
         """
+        check_password_strength(password)
         hashed_password = await make_password(password)
         user = await cls.objects(session).create(
             password=hashed_password,
@@ -95,6 +97,7 @@ class AbstractBaseUser(models.Model):
         Args:
             raw_password: The plain-text password to set.
         """
+        check_password_strength(raw_password)
         self.password = await make_password(raw_password)
 
     async def authenticate(
@@ -237,17 +240,45 @@ else:
 
 class RefreshToken(models.Model):
     """ Token model for storing authentication tokens
+
+    Implements refresh-token *families* to support replay detection and
+    family-wide revocation.
     """
-    key: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    key: Mapped[str] = mapped_column(String(26), unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"))
     created: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=dj_timezone.now,
         server_default=func.now()
     )
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=dj_timezone.now,
+        server_default=func.now(),
+        index=True,
+    )
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=True
+        nullable=False,
+        index=True,
+    )
+    used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        nullable=True,
+        index=True,
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        nullable=True,
+        index=True,
+    )
+    replaced_by_key: Mapped[Optional[str]] = mapped_column(
+        String(26),
+        default=None,
+        nullable=True,
+        index=True,
     )
 
     def __repr__(self) -> str:
