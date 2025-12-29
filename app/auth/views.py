@@ -80,7 +80,6 @@ async def signup(
             detail="An error occurred while creating the user."
         )
     else:
-        await session.commit()
         return CreateUserResponse(user_id=new_user.id)
 
 
@@ -100,12 +99,11 @@ async def login(
             username=form_data.username,
             password=form_data.password
         )
-        await session.commit()
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
+            secure=settings.DEBUG is False,  # Must be secure in production
             samesite="lax",
             max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         )
@@ -153,7 +151,7 @@ async def refresh_token(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
+            secure=settings.DEBUG is False,  # Must be secure in production
             samesite="lax",
             max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         )

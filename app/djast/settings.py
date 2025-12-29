@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # window, the server treats it as a duplicate and returns the replacement
     # refresh token rather than revoking sessions.
     REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = 5
+    # What is_blacklisted should return if the blacklist system is down.
+    FALLBACK_IS_BLACKLISTED: bool = True
     ALLOW_SIGNUP: bool = True
 
     # Regex for password strength validation:

@@ -39,38 +39,16 @@ _REFRESH_TOKEN_EXPIRED_GLOBAL_CLEANUP_LOCK_KEY = (
 )
 _REFRESH_TOKEN_EXPIRED_LOCAL_COOLDOWN_SECONDS = 30
 _refresh_token_cleanup_local_lock = asyncio.Lock()
-_refresh_token_cleanup_last_attempt_monotonic: float = 0.0
+_refresh_token_cleanup_last_attempt: float = 0.0
 
 
-async def cleanup_expired_refresh_tokens(
-    session: AsyncSession,
-    *,
-    now: datetime | None = None,
-) -> int:
-    """Delete refresh tokens that are past their expiry.
-
-    Notes:
-        - Uses djast's timezone utility for an aware 'now'.
-        - Does not commit; relies on surrounding request/session management.
-
-    Returns:
-        Number of rows deleted, if available.
-    """
-    current_time = now or dj_timezone.now()
-
-    result = await session.execute(
-        delete(RefreshToken).where(RefreshToken.expires_at <= current_time)
-    )
-    return int(getattr(result, "rowcount", 0) or 0)
-
-
-async def maybe_cleanup_expired_refresh_tokens(session: AsyncSession) -> int:
+async def cleanup_expired_refresh_tokens(session: AsyncSession) -> int:
     """Run a global expired-token delete at most once per interval.
 
     This avoids periodic tasks by performing opportunistic cleanup during
     normal auth flows.
     """
-    global _refresh_token_cleanup_last_attempt_monotonic
+    global _refresh_token_cleanup_last_attempt
 
     interval_seconds = int(
         getattr(
@@ -88,11 +66,11 @@ async def maybe_cleanup_expired_refresh_tokens(session: AsyncSession) -> int:
     async with _refresh_token_cleanup_local_lock:
         now_mono = time.monotonic()
         if (
-            (now_mono - _refresh_token_cleanup_last_attempt_monotonic)
+            (now_mono - _refresh_token_cleanup_last_attempt)
             < _REFRESH_TOKEN_EXPIRED_LOCAL_COOLDOWN_SECONDS
         ):
             return 0
-        _refresh_token_cleanup_last_attempt_monotonic = now_mono
+        _refresh_token_cleanup_last_attempt = now_mono
 
     try:
         acquired = await redis_client.set(
@@ -109,10 +87,11 @@ async def maybe_cleanup_expired_refresh_tokens(session: AsyncSession) -> int:
         return 0
 
     try:
-        return await cleanup_expired_refresh_tokens(
-            session=session,
-            now=dj_timezone.now(),
+        current_time = dj_timezone.now()
+        result = await session.execute(
+            delete(RefreshToken).where(RefreshToken.expires_at <= current_time)
         )
+        return int(getattr(result, "rowcount", 0) or 0)
     except Exception:
         # Cleanup must never break authentication.
         return 0
@@ -254,17 +233,21 @@ class TokenBlacklist():
         """
         Returns True if token is blacklisted.
         """
-        # 1. Check specific Token JTI
-        if await redis_client.get(f"{self.token_prefix}{token_data.jti}"):
-            return True
-
-        # 2. Check User "Logout All" Timestamp
-        min_iat = await redis_client.get(f"{self.user_prefix}{token_data.sub}:min_iat")
-        if min_iat:
-            if token_data.iat < int(min_iat):
+        try:
+            # 1. Check specific Token JTI
+            if await redis_client.get(f"{self.token_prefix}{token_data.jti}"):
                 return True
 
-        return False
+            # 2. Check User "Logout All" Timestamp
+            min_iat = await redis_client.get(f"{self.user_prefix}{token_data.sub}:min_iat")
+            if min_iat:
+                if token_data.iat < int(min_iat):
+                    return True
+
+            return False
+
+        except Exception:
+            return settings.FALLBACK_IS_BLACKLISTED
 
 
 async def validate_access_token(
@@ -389,7 +372,7 @@ async def authenticate_user(
     Returns:
         Tuple[str, str]: A tuple containing the access token and refresh token.
     """
-    await maybe_cleanup_expired_refresh_tokens(session)
+    await cleanup_expired_refresh_tokens(session)
 
     user = await User.objects(session).get(**{User.USERNAME_FIELD: username})
 
@@ -437,6 +420,24 @@ async def logout_user(
     """
     await TokenBlacklist().add_token(token_data)
     if refresh_token:
+        # If this refresh token was already rotated (used_at set), revoke the
+        # replacement token too. This closes a common race where the client
+        # presents the old cookie after refresh.
+        try:
+            refresh_token_data = decode_token(refresh_token, verify_exp=False)
+        except (InvalidTokenError, ValidationError):
+            refresh_token_data = None
+
+        if refresh_token_data is not None:
+            db_refresh_token = await RefreshToken.objects(session).get(
+                key=refresh_token_data.jti
+            )
+            if db_refresh_token and db_refresh_token.replaced_by_key is not None:
+                replacement = await RefreshToken.objects(session).get(
+                    key=db_refresh_token.replaced_by_key
+                )
+                if replacement and replacement.revoked_at is None:
+                    await replacement.update(session, revoked_at=dj_timezone.now())
         try:
             db_refresh_token = await validate_refresh_token(
                 session=session,
@@ -449,7 +450,7 @@ async def logout_user(
 
         await db_refresh_token.update(session, revoked_at=dj_timezone.now())
 
-    await maybe_cleanup_expired_refresh_tokens(session)
+    await cleanup_expired_refresh_tokens(session)
 
 
 async def logout_user_all_devices(
@@ -465,17 +466,14 @@ async def logout_user_all_devices(
     Returns:
         None
     """
-
-    now = dj_timezone.now()
-
     refresh_tokens = await RefreshToken.objects(session).filter(user_id=user_id)
     for token in refresh_tokens:
-        await token.update(session, revoked_at=now)
+        await token.update(session, revoked_at=dj_timezone.now())
 
     # Blacklist all access tokens for this user
     await TokenBlacklist().add_all_for_user(user_id=user_id)
 
-    await maybe_cleanup_expired_refresh_tokens(session)
+    await cleanup_expired_refresh_tokens(session)
 
 
 async def refresh_access_token(
@@ -505,9 +503,10 @@ async def refresh_access_token(
     if refresh_token_data.type != "refresh":
         raise auth_exceptions.InvalidToken("Invalid refresh token.")
 
-    await maybe_cleanup_expired_refresh_tokens(session)
+    await cleanup_expired_refresh_tokens(session)
 
-    db_refresh_token = await RefreshToken.objects(session).get(key=refresh_token_data.jti)
+    db_refresh_token = await RefreshToken.objects(session).get(
+        key=refresh_token_data.jti)
     if not db_refresh_token or db_refresh_token.revoked_at is not None:
         raise auth_exceptions.InvalidToken("Invalid refresh token.")
 
@@ -551,9 +550,12 @@ async def refresh_access_token(
                     iat=replacement_iat,
                 )
                 return access_token, replacement_jwt
+        # Abuse detected: revoke all tokens for this user
+        await logout_user_all_devices(session=session, user_id=user.id)
         raise auth_exceptions.InvalidToken("Invalid refresh token.")
 
-    new_refresh_token_data, new_refresh_token = encode_token(user_id=user.id, token_type="refresh")
+    new_refresh_token_data, new_refresh_token = encode_token(
+        user_id=user.id, token_type="refresh")
 
     consume_stmt = (
         update(RefreshToken)

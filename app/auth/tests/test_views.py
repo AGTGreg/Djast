@@ -574,6 +574,130 @@ async def test_logout_revoke_blacklists_current_access_token(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_logout_with_stale_refresh_cookie_revokes_replacement_refresh_token(
+    auth_client,
+    db_session,
+):
+    """If client presents a rotated (stale) refresh cookie, logout should still
+    revoke the *current* replacement refresh token.
+    """
+    client, mode = auth_client
+    password = _strong_password()
+    signup_payload, login_form = _new_user_payload(mode, password=password)
+
+    signup_resp = await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
+    assert signup_resp.status_code == 201, signup_resp.text
+
+    token_resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
+    assert token_resp.status_code == 200, token_resp.text
+    access_token = _extract_access_token(token_resp.json())
+    old_refresh = token_resp.cookies.get("refresh_token")
+    assert old_refresh
+
+    # Rotate once, producing a replacement refresh cookie.
+    refresh_resp = await client.post(f"{_auth_prefix()}/refresh")
+    assert refresh_resp.status_code == 200, refresh_resp.text
+    new_refresh = refresh_resp.cookies.get("refresh_token")
+    assert new_refresh
+    assert new_refresh != old_refresh
+
+    old_refresh_data = auth.utils.auth_backend.decode_token(old_refresh, verify_exp=False)
+    new_refresh_data = auth.utils.auth_backend.decode_token(new_refresh, verify_exp=False)
+
+    old_row = await auth.models.RefreshToken.objects(db_session).get(key=old_refresh_data.jti)
+    assert old_row is not None
+    assert old_row.used_at is not None
+    assert old_row.replaced_by_key == new_refresh_data.jti
+
+    new_row = await auth.models.RefreshToken.objects(db_session).get(key=new_refresh_data.jti)
+    assert new_row is not None
+    assert new_row.revoked_at is None
+
+    # Simulate a stale cookie at logout time.
+    revoke_resp = await client.post(
+        f"{_auth_prefix()}/revoke",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Cookie": f"refresh_token={old_refresh}",
+        },
+    )
+    assert revoke_resp.status_code == 204, revoke_resp.text
+
+    # Replacement token should now be revoked.
+    new_row = await auth.models.RefreshToken.objects(db_session).get(key=new_refresh_data.jti)
+    assert new_row is not None
+    assert new_row.revoked_at is not None
+
+    # And refresh with the replacement cookie should fail.
+    refresh_after_logout = await client.post(
+        f"{_auth_prefix()}/refresh",
+        headers={"Cookie": f"refresh_token={new_refresh}"},
+    )
+    assert refresh_after_logout.status_code == 401
+    assert refresh_after_logout.json()["detail"] == "Invalid credentials."
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_does_not_500_access_token_validation(
+    auth_client,
+    monkeypatch,
+):
+    """If Redis is unavailable during blacklist checks, we should not 500.
+
+    Default policy is fail-closed via settings.FALLBACK_IS_BLACKLISTED.
+    """
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    old_fallback = settings.FALLBACK_IS_BLACKLISTED
+    settings.FALLBACK_IS_BLACKLISTED = True
+    try:
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("redis down")
+
+        # Blacklist checks should not bubble exceptions.
+        monkeypatch.setattr(auth.utils.auth_backend.redis_client, "get", _boom)
+
+        me = await client.get(
+            f"{_auth_prefix()}/users/me/",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert me.status_code == 401
+        assert me.json()["detail"] == "Invalid credentials."
+    finally:
+        settings.FALLBACK_IS_BLACKLISTED = old_fallback
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_fail_open_allows_access_when_configured(
+    auth_client,
+    monkeypatch,
+):
+    """If Redis is unavailable during blacklist checks, we should not 500.
+
+    When configured to fail-open, authenticated requests should still succeed.
+    """
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    old_fallback = settings.FALLBACK_IS_BLACKLISTED
+    settings.FALLBACK_IS_BLACKLISTED = False
+    try:
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr(auth.utils.auth_backend.redis_client, "get", _boom)
+
+        me = await client.get(
+            f"{_auth_prefix()}/users/me/",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert me.status_code == 200, me.text
+    finally:
+        settings.FALLBACK_IS_BLACKLISTED = old_fallback
+
+
+@pytest.mark.asyncio
 async def test_logout_current_device_keeps_other_device_logged_in(auth_client):
     """If user logs out on device A, device B remains valid."""
     client, mode = auth_client
