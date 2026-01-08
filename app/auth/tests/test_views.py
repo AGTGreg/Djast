@@ -157,6 +157,10 @@ async def auth_client(request, db_engine, db_session):
     mode = request.param
     settings.AUTH_USER_MODEL_TYPE = mode
 
+    # Disable rate limiting for functional tests
+    from djast.rate_limit import limiter
+    limiter.enabled = False
+
     clear_mappers()
     Base.metadata.clear()
 

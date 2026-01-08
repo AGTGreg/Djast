@@ -29,6 +29,8 @@ from auth.forms import OAuth2EmailRequestForm
 from auth.utils import auth_backend
 from auth import exceptions as auth_exceptions
 
+from djast.rate_limit import limiter
+
 router = APIRouter()
 
 
@@ -42,7 +44,9 @@ if settings.AUTH_USER_MODEL_TYPE == "email":
     response_model=CreateUserResponse,
     status_code=status.HTTP_201_CREATED
 )
+@limiter.limit(settings.AUTH_RATE_LIMIT_SIGNUP)
 async def signup(
+    request: Request,
     user_in: Annotated[UserCreate, Body()],
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> CreateUserResponse:
@@ -84,7 +88,9 @@ async def signup(
 
 
 @router.post("/token", response_model=AccessToken)
+@limiter.limit(settings.AUTH_RATE_LIMIT_LOGIN)
 async def login(
+    request: Request,
     response: Response,
     form_data: Annotated[LoginForm, Depends()],
     session: Annotated[AsyncSession, Depends(get_async_session)]
@@ -125,6 +131,7 @@ async def login(
 
 
 @router.post("/refresh", response_model=AccessToken)
+@limiter.limit(settings.AUTH_RATE_LIMIT_REFRESH)
 async def refresh_token(
     request: Request,
     response: Response,
@@ -173,7 +180,9 @@ async def refresh_token(
 
 
 @router.post("/change-password", response_model=BaseResponse)
+@limiter.limit(settings.AUTH_RATE_LIMIT_CHANGE_PASSWORD)
 async def change_password(
+    request: Request,
     password_change: Annotated[PasswordChange, Body()],
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
@@ -208,6 +217,7 @@ async def change_password(
 
 
 @router.post("/revoke", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
 async def logout(
     request: Request,
     response: Response,
@@ -229,7 +239,9 @@ async def logout(
 
 
 @router.post("/revoke-all", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
 async def logout_all_devices(
+    request: Request,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
 ):
@@ -243,7 +255,9 @@ async def logout_all_devices(
 
 
 @router.post("/deactivate", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
 async def deactivate_account(
+    request: Request,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
 ):
@@ -269,7 +283,9 @@ async def deactivate_account(
 
 
 @router.get("/users/me/", response_model=UserRead)
+@limiter.limit(settings.AUTH_RATE_LIMIT_USER_ME)
 async def read_users_me(
+    request: Request,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
 ):

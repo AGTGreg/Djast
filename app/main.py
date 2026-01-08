@@ -12,6 +12,11 @@ def create_app() -> FastAPI:
         debug=settings.DEBUG,
     )
 
+    from djast.rate_limit import limiter
+    from slowapi.middleware import SlowAPIMiddleware
+    app.state.limiter = limiter
+    app.add_middleware(SlowAPIMiddleware)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ALLOW_ORIGINS,
