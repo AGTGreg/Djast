@@ -41,6 +41,16 @@ class AccountLockedOut(Exception):
     pass
 
 
+class OAuthProviderDisabled(Exception):
+    """Raised when an OAuth provider is not enabled in settings."""
+    pass
+
+
+class OAuthError(Exception):
+    """Raised when an OAuth flow fails (state mismatch, token exchange, profile fetch)."""
+    pass
+
+
 CREDENTIALS_EXCEPTION = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Invalid credentials.",

@@ -61,6 +61,21 @@ class Settings(BaseSettings):
     # !! IMPORTANT !! This setting will change the table for the User model.
     AUTH_USER_MODEL_TYPE: str = "django"  # or "email"
 
+    # OAuth Providers (disabled by default)
+    OAUTH_GOOGLE_ENABLED: bool = False
+    OAUTH_GOOGLE_CLIENT_ID: str = ""
+    OAUTH_GOOGLE_CLIENT_SECRET: str = ""
+
+    OAUTH_GITHUB_ENABLED: bool = False
+    OAUTH_GITHUB_CLIENT_ID: str = ""
+    OAUTH_GITHUB_CLIENT_SECRET: str = ""
+
+    # Frontend URL to redirect to after OAuth callback (with token in fragment)
+    OAUTH_LOGIN_REDIRECT_URL: str = "http://localhost:3000/auth/callback"
+
+    # Allow OAuth-only users to set a password for password-based login
+    OAUTH_ALLOW_SET_PASSWORD: bool = True
+
     # CORS defaults
     # - Developer-friendly in DEBUG (permits common localhost front-ends (see model_post_init))
     # - Locked down in production unless explicitly configured
@@ -89,6 +104,7 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_CHANGE_PASSWORD: str = "3/minute"
     AUTH_RATE_LIMIT_REVOKE: str = "20/minute"
     AUTH_RATE_LIMIT_USER_ME: str = "100/minute"
+    AUTH_RATE_LIMIT_OAUTH: str = "10/minute"
 
     def model_post_init(self, __context) -> None:
         # If the user didn't explicitly configure origins, provide safe defaults.

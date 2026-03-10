@@ -9,16 +9,18 @@ from fastapi import (
     Request,
     Response
 )
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from djast.settings import settings
 from djast.database import get_async_session
-from auth.models import User
+from auth.models import User, OAuthAccount
 from auth.schemas import (
     UserRead,
     UserCreate,
     PasswordChange,
+    SetPassword,
     BaseResponse,
     AccessToken,
     CreateUserResponse,
@@ -28,6 +30,7 @@ from auth.schemas import (
 from auth.forms import OAuth2EmailRequestForm
 from auth.utils import auth_backend
 from auth.utils.auth_backend import set_refresh_cookie, get_current_user
+from auth.utils import oauth as oauth_utils
 from auth import exceptions as auth_exceptions
 
 from djast.rate_limit import limiter
@@ -263,3 +266,166 @@ async def read_users_me(
     user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     return user
+
+
+# OAuth Endpoints =============================================================
+
+def _build_callback_url(request: Request, provider: str) -> str:
+    """Build the OAuth callback URL for the given provider."""
+    return str(request.url_for("oauth_callback", provider=provider))
+
+
+@router.get("/oauth/{provider}/authorize")
+@limiter.limit(settings.AUTH_RATE_LIMIT_OAUTH)
+async def oauth_authorize(
+    request: Request,
+    provider: str,
+) -> RedirectResponse:
+    """Redirect to OAuth provider's consent screen."""
+    try:
+        url = await oauth_utils.get_authorization_url(
+            provider=provider,
+            callback_url=_build_callback_url(request, provider),
+        )
+    except auth_exceptions.OAuthProviderDisabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"OAuth provider '{provider}' is not available."
+        )
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/oauth/{provider}/callback")
+@limiter.limit(settings.AUTH_RATE_LIMIT_OAUTH)
+async def oauth_callback(
+    request: Request,
+    provider: str,
+    code: str,
+    state: str,
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> RedirectResponse:
+    """Handle OAuth callback, create/link user, issue tokens."""
+    try:
+        oauth_utils.validate_provider(provider)
+    except auth_exceptions.OAuthProviderDisabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"OAuth provider '{provider}' is not available."
+        )
+
+    try:
+        user = await oauth_utils.handle_callback(
+            provider=provider,
+            code=code,
+            state=state,
+            callback_url=_build_callback_url(request, provider),
+            session=session,
+        )
+    except auth_exceptions.OAuthError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    # Issue tokens using the same flow as password auth
+    access_token_data, access_token = auth_backend.encode_token(
+        user_id=user.id, token_type="access"
+    )
+    refresh_token_data, refresh_token = auth_backend.encode_token(
+        user_id=user.id, token_type="refresh"
+    )
+
+    from auth.models import RefreshToken
+    await RefreshToken.objects(session).create(
+        key=refresh_token_data.jti,
+        user_id=user.id,
+        issued_at=auth_backend._dt_from_ts(refresh_token_data.iat),
+        expires_at=auth_backend._dt_from_ts(refresh_token_data.exp),
+    )
+
+    # Redirect to frontend with access token in URL fragment
+    redirect_url = (
+        f"{settings.OAUTH_LOGIN_REDIRECT_URL}"
+        f"#access_token={access_token}"
+        f"&token_type=bearer"
+        f"&expires_in={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}"
+    )
+    response = RedirectResponse(
+        url=redirect_url, status_code=status.HTTP_302_FOUND
+    )
+    set_refresh_cookie(response, refresh_token)
+    return response
+
+
+@router.delete(
+    "/oauth/{provider}/link",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
+async def oauth_unlink(
+    request: Request,
+    provider: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> None:
+    """Unlink a social account from the authenticated user."""
+    if provider not in oauth_utils.SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported OAuth provider: {provider}",
+        )
+
+    oauth_account = await OAuthAccount.objects(session).get(
+        provider=provider, user_id=user.id,
+    )
+    if not oauth_account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No linked account for this provider.",
+        )
+
+    # Prevent unlinking if it's the user's only auth method
+    has_password = await user.has_usable_password()
+    other_oauth_count = await OAuthAccount.objects(session).count(
+        user_id=user.id,
+    )
+    if not has_password and other_oauth_count <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot unlink the only authentication method.",
+        )
+
+    await oauth_account.delete(session)
+
+
+@router.post("/set-password", response_model=BaseResponse)
+@limiter.limit(settings.AUTH_RATE_LIMIT_CHANGE_PASSWORD)
+async def set_password(
+    request: Request,
+    password_data: Annotated[SetPassword, Body()],
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> BaseResponse:
+    """Set a password for an OAuth-only user who has no current password."""
+    if not settings.OAUTH_ALLOW_SET_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Setting a password is not allowed.",
+        )
+
+    if await user.has_usable_password():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User already has a password. Use change-password instead.",
+        )
+
+    try:
+        await user.set_password(password_data.new_password)
+    except auth_exceptions.PasswordIsWeak as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    await user.save(session)
+    return BaseResponse(message="Password set successfully.")

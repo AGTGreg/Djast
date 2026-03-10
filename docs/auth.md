@@ -7,7 +7,8 @@ This document explains how to use and configure the built-in auth module. It cov
 **Quick summary:**
 - JWT access tokens + rotating refresh tokens stored in HTTP-only cookies.
 - Two user model types: Django-style (username) or email-based — controlled by a single setting.
-- Endpoints for signup, login, token refresh, logout, password change, and account deactivation.
+- Optional OAuth2 social login (Google, GitHub) — toggled on/off via settings, disabled by default.
+- Endpoints for signup, login, token refresh, logout, password change, account deactivation, and OAuth flows.
 - Security layers: PBKDF2 password hashing, token blacklisting via Redis, brute force protection, rate limiting.
 
 ---
@@ -42,10 +43,14 @@ All endpoints are mounted at `{APP_PREFIX}/auth` (default: `/api/v1/auth`). Ever
 | POST | `/token` | No | Login (returns access token + sets refresh cookie) |
 | POST | `/refresh` | No | Rotate refresh token and get a new access token |
 | POST | `/change-password` | Yes | Change password (revokes all sessions) |
+| POST | `/set-password` | Yes | Set password for OAuth-only users |
 | POST | `/logout` | Yes | Logout current device |
 | POST | `/logout-all` | Yes | Logout all devices |
 | POST | `/deactivate` | Yes | Deactivate account and revoke all sessions |
 | GET | `/users/me` | Yes | Get current user info |
+| GET | `/oauth/{provider}/authorize` | No | Redirect to OAuth provider consent screen |
+| GET | `/oauth/{provider}/callback` | No | Handle OAuth callback (creates/links user, issues tokens) |
+| DELETE | `/oauth/{provider}/link` | Yes | Unlink a social account |
 
 **Signup**
 ```bash
@@ -116,6 +121,71 @@ This revokes all sessions across all devices after changing the password.
 curl http://localhost:8000/api/v1/auth/users/me \
   -H "Authorization: Bearer eyJ..."
 ```
+
+---
+
+**OAuth2 social login (Google / GitHub)**
+
+OAuth is disabled by default. Enable a provider by setting its credentials in your environment:
+
+```bash
+# dev.env
+OAUTH_GOOGLE_ENABLED=true
+OAUTH_GOOGLE_CLIENT_ID=your-google-client-id
+OAUTH_GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+OAUTH_GITHUB_ENABLED=true
+OAUTH_GITHUB_CLIENT_ID=your-github-client-id
+OAUTH_GITHUB_CLIENT_SECRET=your-github-client-secret
+```
+
+When disabled, the OAuth endpoints return 404. Existing password auth is completely unaffected.
+
+**How the flow works:**
+
+1. Frontend directs the user to `GET /api/v1/auth/oauth/google/authorize` (or `github`).
+2. Backend generates a CSRF state token (stored in Redis, 5-minute TTL), then redirects to the provider's consent screen.
+3. After the user approves, the provider redirects to `GET /api/v1/auth/oauth/google/callback` with an authorization code.
+4. Backend exchanges the code for an access token, fetches the user's profile (email, name), and either:
+   - Finds an existing `OAuthAccount` link → returns that user.
+   - Finds an existing user with the same email → auto-links the OAuth identity to that account.
+   - Creates a new user with an unusable password + a new `OAuthAccount` record.
+5. Backend issues the same JWT access + refresh tokens used by password auth.
+6. Backend redirects to `OAUTH_LOGIN_REDIRECT_URL` with the access token in the URL fragment (`#access_token=...&token_type=bearer&expires_in=1800`) and sets the refresh cookie.
+
+The frontend reads the token from the URL fragment and stores it. The refresh cookie works identically to password-based login.
+
+**Account linking:**
+
+OAuth auto-links by email. If a user signed up with `alice@example.com` via password, and later signs in with Google using the same email, the Google identity is linked to the existing account. The user can then log in with either method.
+
+A user can have multiple OAuth providers linked. Each provider is tracked in the `OAuthAccount` model (table: `auth_o_auth_account`).
+
+**Setting a password for OAuth-only users:**
+
+Users who signed up via OAuth have no password. They can set one to enable password-based login:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/set-password \
+  -H "Authorization: Bearer eyJ..." \
+  -H "Content-Type: application/json" \
+  -d '{"new_password": "MyNewPass1!"}'
+```
+
+This is controlled by `OAUTH_ALLOW_SET_PASSWORD` (default: `true`). Users who already have a password get a 400 — they should use `/change-password` instead.
+
+**Unlinking a provider:**
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/auth/oauth/google/link \
+  -H "Authorization: Bearer eyJ..."
+```
+
+Users cannot unlink their only authentication method. If an OAuth-only user with a single provider tries to unlink, they get a 400. They must either set a password or link another provider first.
+
+**Username generation (Django mode):**
+
+In `django` mode, OAuth users need a username. The system auto-generates one from the email prefix (e.g., `alice` from `alice@example.com`), sanitizing non-alphanumeric characters and appending a numeric suffix if taken (`alice1`, `alice2`, etc.).
 
 ---
 
@@ -235,6 +305,14 @@ All settings are in `app/djast/settings.py` and can be overridden via environmen
 | `ACCOUNT_LOGIN_MAX_ATTEMPTS` | `5` | Failed logins before lockout (0 = disabled) |
 | `ACCOUNT_LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration in seconds |
 | `FALLBACK_IS_BLACKLISTED` | `true` | Treat tokens as blacklisted when Redis is down |
+| `OAUTH_GOOGLE_ENABLED` | `false` | Enable Google OAuth login |
+| `OAUTH_GOOGLE_CLIENT_ID` | `""` | Google OAuth client ID |
+| `OAUTH_GOOGLE_CLIENT_SECRET` | `""` | Google OAuth client secret |
+| `OAUTH_GITHUB_ENABLED` | `false` | Enable GitHub OAuth login |
+| `OAUTH_GITHUB_CLIENT_ID` | `""` | GitHub OAuth client ID |
+| `OAUTH_GITHUB_CLIENT_SECRET` | `""` | GitHub OAuth client secret |
+| `OAUTH_LOGIN_REDIRECT_URL` | `"http://localhost:3000/auth/callback"` | Frontend URL to redirect to after OAuth callback |
+| `OAUTH_ALLOW_SET_PASSWORD` | `true` | Allow OAuth-only users to set a password |
 
 **Rate limit settings:**
 
@@ -246,6 +324,7 @@ All settings are in `app/djast/settings.py` and can be overridden via environmen
 | `AUTH_RATE_LIMIT_CHANGE_PASSWORD` | `"3/minute"` |
 | `AUTH_RATE_LIMIT_REVOKE` | `"20/minute"` |
 | `AUTH_RATE_LIMIT_USER_ME` | `"100/minute"` |
+| `AUTH_RATE_LIMIT_OAUTH` | `"10/minute"` |
 
 ---
 

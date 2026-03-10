@@ -13,6 +13,13 @@ All notable changes to this project will be documented in this file.
 - `CORS_ALLOW_CREDENTIALS` now defaults to `True` in DEBUG, `False` in production (was always `True`).
 
 ### Added
+- **OAuth2 social login**: Optional Google and GitHub sign-up/sign-in flows, toggled via `OAUTH_GOOGLE_ENABLED` / `OAUTH_GITHUB_ENABLED` settings (disabled by default).
+  - New endpoints: `GET /auth/oauth/{provider}/authorize`, `GET /auth/oauth/{provider}/callback`, `DELETE /auth/oauth/{provider}/link`, `POST /auth/set-password`.
+  - `OAuthAccount` model links social identities to users. Auto-links by email if a matching user exists.
+  - OAuth users receive the same JWT access + refresh tokens as password users (unified flow).
+  - OAuth-only users can set a password later (configurable via `OAUTH_ALLOW_SET_PASSWORD`, default `True`).
+  - Uses Authlib for OAuth2/OIDC protocol handling. CSRF protection via Redis-backed state tokens.
+  - 38 new tests covering both `django` and `email` auth modes.
 - `expires_in` field in token responses (login, refresh) per OAuth 2.0 RFC 6749 §5.1. Returns access token lifetime in seconds.
 
 ### Changed

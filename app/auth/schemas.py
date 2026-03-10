@@ -41,6 +41,10 @@ class PasswordChange(BaseModel):
     new_password: str = Field(max_length=100)
 
 
+class SetPassword(BaseModel):
+    new_password: str = Field(max_length=100)
+
+
 # Response Schemas
 class BaseResponse(BaseModel):
     message: str

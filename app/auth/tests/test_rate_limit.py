@@ -2,9 +2,16 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from djast.settings import settings
+import auth.models
+import auth.schemas
+import auth.utils.auth_backend
+import auth.utils.oauth
 import auth.views
+import djast.urls
 import main
 import importlib
+from sqlalchemy.orm import clear_mappers
+from djast.db.models import Base
 
 
 def _auth_prefix() -> str:
@@ -57,7 +64,15 @@ async def rate_limit_client(db_engine, db_session):
     from djast.rate_limit import limiter
     limiter.enabled = True
 
+    clear_mappers()
+    Base.metadata.clear()
+
+    importlib.reload(auth.models)
+    importlib.reload(auth.schemas)
+    importlib.reload(auth.utils.auth_backend)
+    importlib.reload(auth.utils.oauth)
     importlib.reload(auth.views)
+    importlib.reload(djast.urls)
     importlib.reload(main)
 
     app = main.app
@@ -65,7 +80,6 @@ async def rate_limit_client(db_engine, db_session):
     app.dependency_overrides[get_async_session] = lambda: db_session
 
     # Create tables
-    from djast.db.models import Base
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -83,6 +97,10 @@ async def rate_limit_client(db_engine, db_session):
 
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+    clear_mappers()
+    Base.metadata.clear()
+    importlib.reload(auth.models)
 
 
 def _strong_password() -> str:

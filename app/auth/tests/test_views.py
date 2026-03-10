@@ -13,6 +13,7 @@ import auth.models
 import auth.views
 import auth.schemas
 import auth.utils.auth_backend
+import auth.utils.oauth
 import djast.urls
 import main
 from djast.settings import settings
@@ -167,6 +168,7 @@ async def auth_client(request, db_engine, db_session):
     importlib.reload(auth.models)
     importlib.reload(auth.schemas)
     importlib.reload(auth.utils.auth_backend)
+    importlib.reload(auth.utils.oauth)
     importlib.reload(auth.views)
     importlib.reload(djast.urls)
     importlib.reload(main)

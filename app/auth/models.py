@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey
+from sqlalchemy import String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -224,6 +224,35 @@ else:
         """ Use this User model for authentication
         """
         pass
+
+
+class OAuthAccount(models.Model):
+    """Links a social provider identity to a User.
+
+    Follows the same pattern as django-allauth's SocialAccount.
+    A user can have multiple OAuthAccounts (one per provider).
+    """
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("auth_user.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(30), index=True)
+    provider_user_id: Mapped[str] = mapped_column(String(255))
+    provider_email: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=dj_timezone.now,
+        server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "provider_user_id",
+            name="uq_oauth_provider_user"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OAuthAccount(provider={self.provider}, user_id={self.user_id})>"
 
 
 class RefreshToken(models.Model):
