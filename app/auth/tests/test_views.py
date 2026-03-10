@@ -40,7 +40,7 @@ def _password_of_length(length: int) -> str:
     if length < 8:
         raise ValueError("length must be >= 8")
     # Must include: lowercase, uppercase, digit, special.
-    # Must use allowed chars: [A-Za-z\d@$!%*?&]
+    # Must use printable ASCII chars.
     base = "Aa1!"
     password = base + ("a" * (length - len(base)))
     assert len(password) == length
@@ -330,6 +330,39 @@ async def test_expired_refresh_tokens_are_deleted_on_login(
 
 
 @pytest.mark.asyncio
+async def test_login_response_includes_expires_in(auth_client):
+    client, mode = auth_client
+    password = _strong_password()
+    signup_payload, login_form = _new_user_payload(mode, password=password)
+
+    signup_resp = await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
+    assert signup_resp.status_code == 201, signup_resp.text
+
+    token_resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
+    assert token_resp.status_code == 200, token_resp.text
+    body = token_resp.json()
+    assert body["expires_in"] == settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+
+@pytest.mark.asyncio
+async def test_refresh_response_includes_expires_in(auth_client):
+    client, mode = auth_client
+    password = _strong_password()
+    signup_payload, login_form = _new_user_payload(mode, password=password)
+
+    signup_resp = await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
+    assert signup_resp.status_code == 201, signup_resp.text
+
+    token_resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
+    assert token_resp.status_code == 200, token_resp.text
+
+    refresh_resp = await client.post(f"{_auth_prefix()}/refresh")
+    assert refresh_resp.status_code == 200, refresh_resp.text
+    body = refresh_resp.json()
+    assert body["expires_in"] == settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+
+@pytest.mark.asyncio
 async def test_login_invalid_credentials_returns_401(auth_client):
     client, mode = auth_client
     password = _strong_password()
@@ -435,7 +468,7 @@ async def test_refresh_old_refresh_token_reuse_revokes_all_tokens(auth_client):
 
     # Existing access token should still authorize (no global logout).
     me = await client.get(
-        f"{_auth_prefix()}/users/me/",
+        f"{_auth_prefix()}/users/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert me.status_code == 200
@@ -478,7 +511,7 @@ async def test_read_users_me_returns_current_user(auth_client):
     user_id, access_token = await _signup_and_login(client, mode)
 
     resp = await client.get(
-        f"{_auth_prefix()}/users/me/",
+        f"{_auth_prefix()}/users/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert resp.status_code == 200, resp.text
@@ -494,7 +527,7 @@ async def test_read_users_me_returns_current_user(auth_client):
 async def test_invalid_access_token_returns_401(auth_client):
     client, _mode = auth_client
     resp = await client.get(
-        f"{_auth_prefix()}/users/me/",
+        f"{_auth_prefix()}/users/me",
         headers={"Authorization": "Bearer not-a-valid-jwt"},
     )
     assert resp.status_code == 401
@@ -564,14 +597,14 @@ async def test_logout_revoke_blacklists_current_access_token(auth_client):
     _user_id, access_token = await _signup_and_login(client, mode)
 
     revoke_resp = await client.post(
-        f"{_auth_prefix()}/revoke",
+        f"{_auth_prefix()}/logout",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert revoke_resp.status_code == 204
 
     # Token should no longer authorize requests
     me_resp = await client.get(
-        f"{_auth_prefix()}/users/me/",
+        f"{_auth_prefix()}/users/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert me_resp.status_code == 401
@@ -619,7 +652,7 @@ async def test_logout_with_stale_refresh_cookie_revokes_replacement_refresh_toke
 
     # Simulate a stale cookie at logout time.
     revoke_resp = await client.post(
-        f"{_auth_prefix()}/revoke",
+        f"{_auth_prefix()}/logout",
         headers={
             "Authorization": f"Bearer {access_token}",
             "Cookie": f"refresh_token={old_refresh}",
@@ -663,7 +696,7 @@ async def test_redis_outage_does_not_500_access_token_validation(
         monkeypatch.setattr(auth.utils.auth_backend.redis_client, "get", _boom)
 
         me = await client.get(
-            f"{_auth_prefix()}/users/me/",
+            f"{_auth_prefix()}/users/me",
             headers={"Authorization": f"Bearer {access_token}"},
         )
         assert me.status_code == 401
@@ -693,7 +726,7 @@ async def test_redis_outage_fail_open_allows_access_when_configured(
         monkeypatch.setattr(auth.utils.auth_backend.redis_client, "get", _boom)
 
         me = await client.get(
-            f"{_auth_prefix()}/users/me/",
+            f"{_auth_prefix()}/users/me",
             headers={"Authorization": f"Bearer {access_token}"},
         )
         assert me.status_code == 200, me.text
@@ -739,21 +772,21 @@ async def test_logout_current_device_keeps_other_device_logged_in(auth_client):
 
         # Device A logs out (revoke current token + refresh token)
         revoke = await device_a.post(
-            f"{_auth_prefix()}/revoke",
+            f"{_auth_prefix()}/logout",
             headers={"Authorization": f"Bearer {access_a}"},
         )
         assert revoke.status_code == 204
 
         # Device A access should be invalid
         me_a = await device_a.get(
-            f"{_auth_prefix()}/users/me/",
+            f"{_auth_prefix()}/users/me",
             headers={"Authorization": f"Bearer {access_a}"},
         )
         assert me_a.status_code == 401
 
         # Device B should still be valid
         me_b = await device_b.get(
-            f"{_auth_prefix()}/users/me/",
+            f"{_auth_prefix()}/users/me",
             headers={"Authorization": f"Bearer {access_b}"},
         )
         assert me_b.status_code == 200, me_b.text
@@ -797,20 +830,20 @@ async def test_logout_all_devices_revokes_both_devices(auth_client):
         await asyncio.sleep(1.1)
 
         revoke_all = await device_a.post(
-            f"{_auth_prefix()}/revoke-all",
+            f"{_auth_prefix()}/logout-all",
             headers={"Authorization": f"Bearer {access_a}"},
         )
         assert revoke_all.status_code == 204
 
         # Neither device should have access now
         me_a = await device_a.get(
-            f"{_auth_prefix()}/users/me/",
+            f"{_auth_prefix()}/users/me",
             headers={"Authorization": f"Bearer {access_a}"},
         )
         assert me_a.status_code == 401
 
         me_b = await device_b.get(
-            f"{_auth_prefix()}/users/me/",
+            f"{_auth_prefix()}/users/me",
             headers={"Authorization": f"Bearer {access_b}"},
         )
         assert me_b.status_code == 401
@@ -833,13 +866,13 @@ async def test_logout_all_devices_blacklists_access_token(auth_client):
     await asyncio.sleep(1.1)
 
     resp = await client.post(
-        f"{_auth_prefix()}/revoke-all",
+        f"{_auth_prefix()}/logout-all",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert resp.status_code == 204
 
     me_resp = await client.get(
-        f"{_auth_prefix()}/users/me/",
+        f"{_auth_prefix()}/users/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert me_resp.status_code == 401
@@ -869,7 +902,7 @@ async def test_deactivate_account_disables_login_and_token(auth_client):
 
     # Using the old token should fail
     me_resp = await client.get(
-        f"{_auth_prefix()}/users/me/",
+        f"{_auth_prefix()}/users/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert me_resp.status_code == 401
@@ -908,5 +941,5 @@ async def test_signup_password_length_101_is_rejected(auth_client):
     payload, _login_form = _new_user_payload(mode, password=password)
 
     resp = await client.post(f"{_auth_prefix()}/signup", json=payload)
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Password is too weak."
+    # Pydantic max_length=100 rejects before the regex validator runs.
+    assert resp.status_code == 422

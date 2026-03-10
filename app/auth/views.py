@@ -27,6 +27,7 @@ from auth.schemas import (
 
 from auth.forms import OAuth2EmailRequestForm
 from auth.utils import auth_backend
+from auth.utils.auth_backend import set_refresh_cookie, get_current_user
 from auth import exceptions as auth_exceptions
 
 from djast.rate_limit import limiter
@@ -105,17 +106,16 @@ async def login(
             username=form_data.username,
             password=form_data.password
         )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=settings.DEBUG is False,  # Must be secure in production
-            samesite="lax",
-            max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-        )
+        set_refresh_cookie(response, refresh_token)
         return AccessToken(
             access_token=access_token,
-            token_type="bearer"
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
+    except auth_exceptions.AccountLockedOut:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again later."
         )
     except auth_exceptions.UserIsInactive:
         raise auth_exceptions.CREDENTIALS_EXCEPTION
@@ -154,17 +154,11 @@ async def refresh_token(
             session=session,
             refresh_token=refresh_token
         )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=settings.DEBUG is False,  # Must be secure in production
-            samesite="lax",
-            max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-        )
+        set_refresh_cookie(response, refresh_token)
         return AccessToken(
             access_token=access_token,
-            token_type="bearer"
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
     except auth_exceptions.InvalidToken:
         raise auth_exceptions.CREDENTIALS_EXCEPTION
@@ -184,21 +178,9 @@ async def refresh_token(
 async def change_password(
     request: Request,
     password_change: Annotated[PasswordChange, Body()],
-    token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
-):
-    try:
-        user = await auth_backend.get_user_from_token_data(
-            session=session,
-            token_data=token_data
-        )
-
-    except auth_exceptions.InvalidToken:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
-
-    except auth_exceptions.UserDoesNotExist:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
-
+) -> BaseResponse:
     if not await user.authenticate(
         session,
         password_change.old_password
@@ -211,19 +193,19 @@ async def change_password(
     await user.set_password(password_change.new_password)
     await user.save(session)
     await auth_backend.logout_user_all_devices(
-        session=session, user_id=int(token_data.sub))
+        session=session, user_id=user.id)
 
     return BaseResponse(message="Password changed successfully.")
 
 
-@router.post("/revoke", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
 async def logout(
     request: Request,
     response: Response,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
-):
+) -> None:
     """
     Standard Logout: Revokes ONLY the token used to make this request.
     """
@@ -235,16 +217,18 @@ async def logout(
         refresh_token=refresh_token
     )
 
-    response.delete_cookie(key="refresh_token")
+    response.delete_cookie(
+        key="refresh_token", path=f"{settings.APP_PREFIX}/auth")
 
 
-@router.post("/revoke-all", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
 async def logout_all_devices(
     request: Request,
+    response: Response,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
-):
+) -> None:
     """
     Global Logout: Revokes ALL tokens for the user.
     """
@@ -252,53 +236,30 @@ async def logout_all_devices(
         session=session,
         user_id=int(token_data.sub)
     )
+    response.delete_cookie(
+        key="refresh_token", path=f"{settings.APP_PREFIX}/auth")
 
 
 @router.post("/deactivate", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit(settings.AUTH_RATE_LIMIT_REVOKE)
 async def deactivate_account(
     request: Request,
-    token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)]
-):
+) -> None:
     """
     Deactivate the authenticated user's account.
     """
-    try:
-        user = await auth_backend.get_user_from_token_data(
-            session=session,
-            token_data=token_data
-        )
-
-    except auth_exceptions.InvalidToken:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
-
-    except auth_exceptions.UserDoesNotExist:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
-
     await auth_backend.deactivate_user(
         session=session,
         user=user
     )
 
 
-@router.get("/users/me/", response_model=UserRead)
+@router.get("/users/me", response_model=UserRead)
 @limiter.limit(settings.AUTH_RATE_LIMIT_USER_ME)
 async def read_users_me(
     request: Request,
-    token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
-    session: Annotated[AsyncSession, Depends(get_async_session)]
-):
-    try:
-        user = await auth_backend.get_user_from_token_data(
-            session=session,
-            token_data=token_data
-        )
-
-    except auth_exceptions.InvalidToken:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
-
-    except auth_exceptions.UserDoesNotExist:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
-
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
     return user

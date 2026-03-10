@@ -36,6 +36,11 @@ class RefreshTokenExpired(Exception):
     pass
 
 
+class AccountLockedOut(Exception):
+    """Exception raised when an account is temporarily locked due to too many failed login attempts."""
+    pass
+
+
 CREDENTIALS_EXCEPTION = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Invalid credentials.",

@@ -18,12 +18,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
 from djast.settings import settings
+from djast.database import get_async_session
 from djast.utils import timezone as dj_timezone
 from auth.models import User, RefreshToken
 from auth.schemas import TokenData, UserCreate
 from auth import exceptions as auth_exceptions
 
 from auth.utils.hashers import check_password
+
+
+def set_refresh_cookie(response: "Response", token: str) -> None:
+    """Set the refresh token as an HTTP-only cookie on the response."""
+    response.set_cookie(
+        key="refresh_token",
+        value=token,
+        httponly=True,
+        secure=settings.DEBUG is False,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path=f"{settings.APP_PREFIX}/auth",
+    )
 
 
 oauth2_scheme = OAuth2PasswordBearer(
@@ -88,6 +102,8 @@ async def cleanup_expired_refresh_tokens(session: AsyncSession) -> int:
 
     try:
         current_time = dj_timezone.now()
+        # Raw delete: Manager.delete_all only supports equality filters;
+        # we need <= for expiry comparison in a single bulk statement.
         result = await session.execute(
             delete(RefreshToken).where(RefreshToken.expires_at <= current_time)
         )
@@ -95,6 +111,49 @@ async def cleanup_expired_refresh_tokens(session: AsyncSession) -> int:
     except Exception:
         # Cleanup must never break authentication.
         return 0
+
+
+# Per-account brute force protection ==========================================
+_LOGIN_ATTEMPT_PREFIX = "login_attempts:"
+
+
+async def _check_account_lockout(username: str) -> None:
+    """Raise AccountLockedOut if the account has exceeded the failed login threshold."""
+    if settings.ACCOUNT_LOGIN_MAX_ATTEMPTS <= 0:
+        return
+    key = f"{_LOGIN_ATTEMPT_PREFIX}{username.lower()}"
+    try:
+        attempts = await redis_client.get(key)
+        if attempts and int(attempts) >= settings.ACCOUNT_LOGIN_MAX_ATTEMPTS:
+            raise auth_exceptions.AccountLockedOut("Account temporarily locked.")
+    except auth_exceptions.AccountLockedOut:
+        raise
+    except Exception:
+        # If Redis is down, fail open — don't block legitimate users.
+        pass
+
+
+async def _record_failed_login(username: str) -> None:
+    """Increment failed login counter with TTL-based expiry."""
+    if settings.ACCOUNT_LOGIN_MAX_ATTEMPTS <= 0:
+        return
+    key = f"{_LOGIN_ATTEMPT_PREFIX}{username.lower()}"
+    try:
+        pipe = redis_client.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, settings.ACCOUNT_LOGIN_LOCKOUT_SECONDS)
+        await pipe.execute()
+    except Exception:
+        pass
+
+
+async def _clear_failed_logins(username: str) -> None:
+    """Clear the failed login counter on successful authentication."""
+    key = f"{_LOGIN_ATTEMPT_PREFIX}{username.lower()}"
+    try:
+        await redis_client.delete(key)
+    except Exception:
+        pass
 
 
 # DateTime Utilities ==========================================================
@@ -129,6 +188,33 @@ def _is_expired(expires_at: datetime) -> bool:
     expires_at = _ensure_aware(expires_at)
     now = dj_timezone.now()
     return expires_at <= now
+
+
+async def _encode_replacement_jwt(
+    session: AsyncSession,
+    replaced_by_key: str,
+) -> str | None:
+    """Return the re-encoded JWT for a valid replacement refresh token.
+
+    Used during grace-period replay handling to return the same replacement
+    token that was already issued, rather than creating a duplicate. Returns
+    None if the replacement token is revoked, expired, or missing.
+    """
+    replacement = await RefreshToken.objects(session).get(key=replaced_by_key)
+    if (
+        not replacement
+        or replacement.revoked_at is not None
+        or _is_expired(replacement.expires_at)
+    ):
+        return None
+    _data, replacement_jwt = encode_token(
+        user_id=replacement.user_id,
+        token_type="refresh",
+        jti=replacement.key,
+        exp=_ts_from_dt(replacement.expires_at),
+        iat=_ts_from_dt(replacement.issued_at),
+    )
+    return replacement_jwt
 
 
 # Token Utilities =============================================================
@@ -372,6 +458,12 @@ async def authenticate_user(
     Returns:
         Tuple[str, str]: A tuple containing the access token and refresh token.
     """
+    # Defense-in-depth: reject oversized passwords before expensive hashing.
+    # OAuth2PasswordRequestForm (used in django mode) doesn't support max_length.
+    if len(password) > 100:
+        raise auth_exceptions.InvalidCredentials("Invalid credentials.")
+
+    await _check_account_lockout(username)
     await cleanup_expired_refresh_tokens(session)
 
     user = await User.objects(session).get(**{User.USERNAME_FIELD: username})
@@ -379,14 +471,19 @@ async def authenticate_user(
     if not user:
         # Prevent timing attacks and user enumeration
         await check_password(password=password, encoded="invalid", setter=None)
+        await _record_failed_login(username)
         raise auth_exceptions.UserDoesNotExist("User not found.")
 
     if user.is_active is False:
         await check_password(password=password, encoded="invalid", setter=None)
+        await _record_failed_login(username)
         raise auth_exceptions.UserIsInactive("User account is inactive.")
 
     if not await user.authenticate(session, password):
+        await _record_failed_login(username)
         raise auth_exceptions.InvalidCredentials("Invalid credentials.")
+
+    await _clear_failed_logins(username)
 
     access_token_data, access_token = encode_token(
         user_id=user.id, token_type="access")
@@ -466,9 +563,17 @@ async def logout_user_all_devices(
     Returns:
         None
     """
-    refresh_tokens = await RefreshToken.objects(session).filter(user_id=user_id)
-    for token in refresh_tokens:
-        await token.update(session, revoked_at=dj_timezone.now())
+    # Raw bulk update: revoke all active refresh tokens for this user in
+    # a single statement instead of N individual round-trips.
+    await session.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=dj_timezone.now())
+    )
+    await session.flush()
 
     # Blacklist all access tokens for this user
     await TokenBlacklist().add_all_for_user(user_id=user_id)
@@ -532,23 +637,10 @@ async def refresh_access_token(
             _within_refresh_reuse_grace(db_refresh_token.used_at)
             and db_refresh_token.replaced_by_key
         ):
-            replacement = await RefreshToken.objects(session).get(
-                key=db_refresh_token.replaced_by_key
+            replacement_jwt = await _encode_replacement_jwt(
+                session, db_refresh_token.replaced_by_key
             )
-            if (
-                replacement
-                and replacement.revoked_at is None
-                and not _is_expired(replacement.expires_at)
-            ):
-                replacement_iat = _ts_from_dt(replacement.issued_at)
-                replacement_exp = _ts_from_dt(replacement.expires_at)
-                _data, replacement_jwt = encode_token(
-                    user_id=replacement.user_id,
-                    token_type="refresh",
-                    jti=replacement.key,
-                    exp=replacement_exp,
-                    iat=replacement_iat,
-                )
+            if replacement_jwt is not None:
                 return access_token, replacement_jwt
         # Abuse detected: revoke all tokens for this user
         await logout_user_all_devices(session=session, user_id=user.id)
@@ -557,6 +649,8 @@ async def refresh_access_token(
     new_refresh_token_data, new_refresh_token = encode_token(
         user_id=user.id, token_type="refresh")
 
+    # Raw atomic update: conditional WHERE ensures only one concurrent
+    # request consumes the token, preventing duplicate rotation.
     consume_stmt = (
         update(RefreshToken)
         .where(
@@ -581,23 +675,10 @@ async def refresh_access_token(
             and _within_refresh_reuse_grace(current.used_at)
             and current.replaced_by_key
         ):
-            replacement = await RefreshToken.objects(session).get(
-                key=current.replaced_by_key
+            replacement_jwt = await _encode_replacement_jwt(
+                session, current.replaced_by_key
             )
-            if (
-                replacement
-                and replacement.revoked_at is None
-                and not _is_expired(replacement.expires_at)
-            ):
-                replacement_iat = _ts_from_dt(replacement.issued_at)
-                replacement_exp = _ts_from_dt(replacement.expires_at)
-                _data, replacement_jwt = encode_token(
-                    user_id=replacement.user_id,
-                    token_type="refresh",
-                    jti=replacement.key,
-                    exp=replacement_exp,
-                    iat=replacement_iat,
-                )
+            if replacement_jwt is not None:
                 return access_token, replacement_jwt
 
         raise auth_exceptions.InvalidToken("Invalid refresh token.")
@@ -639,6 +720,23 @@ async def get_user_from_token_data(
         raise auth_exceptions.UserDoesNotExist("User does not exist or is inactive.")
 
     return user
+
+
+async def get_current_user(
+    token_data: Annotated[TokenData, Depends(validate_access_token)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> User:
+    """FastAPI dependency that returns the authenticated user.
+
+    Composes validate_access_token + get_user_from_token_data, raising
+    CREDENTIALS_EXCEPTION on any auth failure.
+    """
+    try:
+        return await get_user_from_token_data(
+            session=session, token_data=token_data
+        )
+    except (auth_exceptions.InvalidToken, auth_exceptions.UserDoesNotExist):
+        raise auth_exceptions.CREDENTIALS_EXCEPTION
 
 
 async def deactivate_user(

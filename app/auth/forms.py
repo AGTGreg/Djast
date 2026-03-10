@@ -11,7 +11,7 @@ class OAuth2EmailRequestForm:
         self,
         grant_type: str = Form(default=None, pattern="password"),
         email: str = Form(),
-        password: str = Form(),
+        password: str = Form(max_length=100),
         scope: str = Form(default=""),
         client_id: str | None = Form(default=None),
         client_secret: str | None = Form(default=None),

@@ -46,11 +46,14 @@ class Settings(BaseSettings):
     # What is_blacklisted should return if the blacklist system is down.
     FALLBACK_IS_BLACKLISTED: bool = True
     ALLOW_SIGNUP: bool = True
+    # Per-account brute force protection. Set MAX_ATTEMPTS to 0 to disable.
+    ACCOUNT_LOGIN_MAX_ATTEMPTS: int = 5
+    ACCOUNT_LOGIN_LOCKOUT_SECONDS: int = 300  # 5 minutes
 
     # Regex for password strength validation:
     # At least 8 characters and up to 100, one uppercase, one lowercase,
-    # one number and one special character
-    PASSWORD_VALIDATION_REGEX: str = r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,100}$"
+    # one digit, and one special character. Allows all printable ASCII.
+    PASSWORD_VALIDATION_REGEX: str = r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d\s])[\x20-\x7E]{8,100}$"
 
     # Choose between 'django' and 'email' user models. Default is 'django'
     # which is compatible with Django's default users uses username for
@@ -76,7 +79,7 @@ class Settings(BaseSettings):
         "Accept",
         "Origin",
     ]
-    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOW_CREDENTIALS: bool = False
     # /Auth & Security settings ===============================================
 
     # Auth Rate Limits
@@ -107,6 +110,9 @@ class Settings(BaseSettings):
                 ]
             else:
                 self.CORS_ALLOW_ORIGINS = []
+
+        if "CORS_ALLOW_CREDENTIALS" not in getattr(self, "model_fields_set", set()):
+            self.CORS_ALLOW_CREDENTIALS = True if self.DEBUG else False
 
         if self.CORS_ALLOW_CREDENTIALS and any(origin == "*" for origin in self.CORS_ALLOW_ORIGINS):
             raise ValueError(

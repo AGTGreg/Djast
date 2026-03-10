@@ -50,6 +50,18 @@ class AbstractBaseUser(models.Model):
     def __repr__(self) -> str:
         return f"<User(id={self.id})>"
 
+    @staticmethod
+    def normalize_email(email: str) -> str:
+        """Normalize email by lowercasing the domain part."""
+        email = email or ""
+        try:
+            email_name, domain_part = email.strip().rsplit("@", 1)
+        except ValueError:
+            pass
+        else:
+            email = email_name + "@" + domain_part.lower()
+        return email
+
     @classmethod
     async def create_user(
         cls,
@@ -139,18 +151,6 @@ class AbstractEmailUser(AbstractBaseUser):
     def __repr__(self) -> str:
         return f"<User(email={self.email})>"
 
-    @staticmethod
-    def normalize_email(email: str) -> str:
-        """Normalize email by lowercasing the domain part."""
-        email = email or ""
-        try:
-            email_name, domain_part = email.strip().rsplit("@", 1)
-        except ValueError:
-            pass
-        else:
-            email = email_name + "@" + domain_part.lower()
-        return email
-
     @classmethod
     async def create_user(
         cls,
@@ -190,18 +190,6 @@ class AbstractDjangoUser(AbstractBaseUser):
 
     def __repr__(self) -> str:
         return f"<User(username={self.username})>"
-
-    @staticmethod
-    def normalize_email(email: str) -> str:
-        """Normalize email by lowercasing the domain part."""
-        email = email or ""
-        try:
-            email_name, domain_part = email.strip().rsplit("@", 1)
-        except ValueError:
-            pass
-        else:
-            email = email_name + "@" + domain_part.lower()
-        return email
 
     @classmethod
     async def create_user(

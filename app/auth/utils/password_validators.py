@@ -10,7 +10,7 @@ def check_password_strength(password: str) -> bool:
         password (str): The password string to check.
 
     Raises:
-        PasswrodStrengthError: If the password does not meet strength requirements.
+        PasswordIsWeak: If the password does not meet strength requirements.
 
     Returns:
         bool: True if the password meets strength requirements.
