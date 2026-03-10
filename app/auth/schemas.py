@@ -13,7 +13,9 @@ class CreateUserResponse(BaseModel):
 
 if settings.AUTH_USER_MODEL_TYPE == "django":
     class UserCreate(BaseModel):
-        username: str
+        username: str = Field(
+            min_length=1, max_length=150, pattern=r"^[\w.@+\-]+$"
+        )
         email: EmailStr | None = None
         password: str = Field(max_length=100)
 else:

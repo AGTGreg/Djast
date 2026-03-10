@@ -298,6 +298,35 @@ async def _do_oauth_callback(
             )
 
 
+def _csrf_headers(client: AsyncClient) -> dict[str, str]:
+    """Read the csrf_token cookie from the client jar and return it as header."""
+    csrf = client.cookies.get(settings.CSRF_COOKIE_NAME)
+    if csrf:
+        return {settings.CSRF_HEADER_NAME: csrf}
+    return {}
+
+
+async def _do_oauth_flow(
+    client: AsyncClient,
+    provider: str,
+) -> str:
+    """Run a full OAuth callback + code exchange, returning the access token."""
+    state = await _store_oauth_state(provider)
+    resp = await _do_oauth_callback(client, provider, state)
+    assert resp.status_code == 302
+
+    location = resp.headers["location"]
+    assert "code=" in location
+    code = location.split("code=")[1].split("&")[0]
+
+    exchange_resp = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": code},
+    )
+    assert exchange_resp.status_code == 200, exchange_resp.text
+    return exchange_resp.json()["access_token"]
+
+
 async def _store_oauth_state(provider: str) -> str:
     """Store a valid OAuth state token in Redis and return it."""
     import secrets
@@ -391,12 +420,18 @@ async def test_google_callback_creates_new_user(oauth_client):
 
     location = resp.headers["location"]
     assert settings.OAUTH_LOGIN_REDIRECT_URL in location
-    assert "access_token=" in location
+    assert "code=" in location
 
-    # Verify refresh cookie is set
-    cookies = resp.cookies
-    assert "refresh_token" in resp.headers.get("set-cookie", "").lower() or \
-           any("refresh_token" in str(h) for h in resp.headers.raw)
+    # Exchange the code for tokens
+    code = location.split("code=")[1].split("&")[0]
+    exchange = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": code},
+    )
+    assert exchange.status_code == 200
+    assert exchange.json()["access_token"]
+    assert "refresh_token" in exchange.headers.get("set-cookie", "").lower() or \
+           any("refresh_token" in str(h) for h in exchange.headers.raw)
 
 
 @pytest.mark.asyncio
@@ -406,7 +441,15 @@ async def test_github_callback_creates_new_user(oauth_client):
 
     resp = await _do_oauth_callback(client, "github", state)
     assert resp.status_code == 302
-    assert "access_token=" in resp.headers["location"]
+    assert "code=" in resp.headers["location"]
+
+    code = resp.headers["location"].split("code=")[1].split("&")[0]
+    exchange = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": code},
+    )
+    assert exchange.status_code == 200
+    assert exchange.json()["access_token"]
 
 
 # ---------------------------------------------------------------------------
@@ -436,13 +479,7 @@ async def test_oauth_callback_links_to_existing_user(oauth_client):
     original_user_id = resp.json()["user_id"]
 
     # Now do OAuth with the same email
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-
-    # Verify the access token is for the same user
-    location = resp.headers["location"]
-    access_token = location.split("access_token=")[1].split("&")[0]
+    access_token = await _do_oauth_flow(client, "google")
 
     # Use the token to get user info
     me_resp = await client.get(
@@ -463,11 +500,7 @@ async def test_oauth_returning_user(oauth_client):
     client, mode = oauth_client
 
     # First OAuth login
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-    location1 = resp.headers["location"]
-    token1 = location1.split("access_token=")[1].split("&")[0]
+    token1 = await _do_oauth_flow(client, "google")
 
     me1 = await client.get(
         f"{_auth_prefix()}/users/me",
@@ -476,10 +509,7 @@ async def test_oauth_returning_user(oauth_client):
     user_id_1 = me1.json()["id"]
 
     # Second OAuth login — same provider, same user
-    state2 = await _store_oauth_state("google")
-    resp2 = await _do_oauth_callback(client, "google", state2)
-    assert resp2.status_code == 302
-    token2 = resp2.headers["location"].split("access_token=")[1].split("&")[0]
+    token2 = await _do_oauth_flow(client, "google")
 
     me2 = await client.get(
         f"{_auth_prefix()}/users/me",
@@ -532,7 +562,7 @@ async def test_unlink_oauth_with_password(oauth_client):
     # This is simpler than mocking the full OAuth flow
     resp = await client.delete(
         f"{_auth_prefix()}/oauth/google/link",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
     )
     # No linked account → 404
     assert resp.status_code == 404
@@ -545,7 +575,7 @@ async def test_unlink_unsupported_provider(oauth_client):
 
     resp = await client.delete(
         f"{_auth_prefix()}/oauth/fakeprovider/link",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
     )
     assert resp.status_code == 404
 
@@ -556,15 +586,12 @@ async def test_cannot_unlink_only_auth_method(oauth_client):
     client, mode = oauth_client
 
     # Create user via OAuth (no password)
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-    token = resp.headers["location"].split("access_token=")[1].split("&")[0]
+    token = await _do_oauth_flow(client, "google")
 
     # Try to unlink the only auth method
     resp = await client.delete(
         f"{_auth_prefix()}/oauth/google/link",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
     )
     assert resp.status_code == 400
     assert "only authentication method" in resp.json()["detail"].lower()
@@ -580,16 +607,13 @@ async def test_set_password_for_oauth_user(oauth_client):
     client, mode = oauth_client
 
     # Create user via OAuth
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-    token = resp.headers["location"].split("access_token=")[1].split("&")[0]
+    token = await _do_oauth_flow(client, "google")
 
     # Set password
     resp = await client.post(
         f"{_auth_prefix()}/set-password",
         json={"new_password": _strong_password()},
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
     )
     assert resp.status_code == 200
     assert "success" in resp.json()["message"].lower()
@@ -605,7 +629,7 @@ async def test_set_password_rejected_if_already_has_password(oauth_client):
     resp = await client.post(
         f"{_auth_prefix()}/set-password",
         json={"new_password": _strong_password()},
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
     )
     assert resp.status_code == 400
     assert "already has a password" in resp.json()["detail"].lower()
@@ -617,10 +641,7 @@ async def test_set_password_rejected_if_disabled(oauth_client):
     client, mode = oauth_client
 
     # Create user via OAuth
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-    token = resp.headers["location"].split("access_token=")[1].split("&")[0]
+    token = await _do_oauth_flow(client, "google")
 
     # Disable the setting
     original = settings.OAUTH_ALLOW_SET_PASSWORD
@@ -629,7 +650,7 @@ async def test_set_password_rejected_if_disabled(oauth_client):
         resp = await client.post(
             f"{_auth_prefix()}/set-password",
             json={"new_password": _strong_password()},
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
         )
         assert resp.status_code == 403
     finally:
@@ -641,15 +662,12 @@ async def test_set_password_weak_password_rejected(oauth_client):
     """Weak passwords should be rejected in set-password."""
     client, mode = oauth_client
 
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-    token = resp.headers["location"].split("access_token=")[1].split("&")[0]
+    token = await _do_oauth_flow(client, "google")
 
     resp = await client.post(
         f"{_auth_prefix()}/set-password",
         json={"new_password": "weak"},
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
     )
     assert resp.status_code == 400
 
@@ -665,10 +683,7 @@ async def test_oauth_generates_username_in_django_mode(oauth_client):
     if mode != "django":
         pytest.skip("Username generation only applies to django mode")
 
-    state = await _store_oauth_state("google")
-    resp = await _do_oauth_callback(client, "google", state)
-    assert resp.status_code == 302
-    token = resp.headers["location"].split("access_token=")[1].split("&")[0]
+    token = await _do_oauth_flow(client, "google")
 
     me = await client.get(
         f"{_auth_prefix()}/users/me",
@@ -691,3 +706,91 @@ async def test_password_auth_still_works(oauth_client):
     user_id, access_token = await _signup_and_login(client, mode)
     assert user_id > 0
     assert access_token
+
+
+# ---------------------------------------------------------------------------
+# Tests: OAuth authorization code exchange
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_oauth_code_exchange_full_flow(oauth_client):
+    """Full flow: callback → one-time code → exchange for tokens."""
+    client, mode = oauth_client
+    state = await _store_oauth_state("google")
+    resp = await _do_oauth_callback(client, "google", state)
+    assert resp.status_code == 302
+
+    location = resp.headers["location"]
+    assert "code=" in location
+    code = location.split("code=")[1].split("&")[0]
+
+    # Exchange the code
+    exchange = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": code},
+    )
+    assert exchange.status_code == 200
+    data = exchange.json()
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+    assert data["expires_in"] > 0
+
+    # Verify the access token works
+    me = await client.get(
+        f"{_auth_prefix()}/users/me",
+        headers={"Authorization": f"Bearer {data['access_token']}"},
+    )
+    assert me.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_oauth_code_exchange_expired_code(oauth_client):
+    """Expired or non-existent authorization code should return 400."""
+    client, mode = oauth_client
+
+    resp = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": "non-existent-code"},
+    )
+    assert resp.status_code == 400
+    assert "invalid" in resp.json()["detail"].lower() or "expired" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_oauth_code_exchange_reused_code(oauth_client):
+    """Authorization code should be single-use; second exchange must fail."""
+    client, mode = oauth_client
+    state = await _store_oauth_state("google")
+    resp = await _do_oauth_callback(client, "google", state)
+    assert resp.status_code == 302
+
+    code = resp.headers["location"].split("code=")[1].split("&")[0]
+
+    # First exchange succeeds
+    first = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": code},
+    )
+    assert first.status_code == 200
+
+    # Second exchange with same code must fail
+    second = await client.post(
+        f"{_auth_prefix()}/oauth/token",
+        json={"code": code},
+    )
+    assert second.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_no_tokens_in_redirect_url(oauth_client):
+    """Callback redirect should contain a code param, not raw tokens."""
+    client, mode = oauth_client
+    state = await _store_oauth_state("google")
+    resp = await _do_oauth_callback(client, "google", state)
+    assert resp.status_code == 302
+
+    location = resp.headers["location"]
+    assert "code=" in location
+    # Ensure no tokens leak in the redirect URL
+    assert "access_token" not in location
+    assert "refresh_token" not in location

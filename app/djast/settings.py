@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # Per-account brute force protection. Set MAX_ATTEMPTS to 0 to disable.
     ACCOUNT_LOGIN_MAX_ATTEMPTS: int = 5
     ACCOUNT_LOGIN_LOCKOUT_SECONDS: int = 300  # 5 minutes
+    # When True, lockout checks pass when Redis is unavailable (fail-open).
+    # When False, login is blocked if Redis is unavailable (fail-closed).
+    ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN: bool = True
 
     # Regex for password strength validation:
     # At least 8 characters and up to 100, one uppercase, one lowercase,
@@ -70,8 +73,11 @@ class Settings(BaseSettings):
     OAUTH_GITHUB_CLIENT_ID: str = ""
     OAUTH_GITHUB_CLIENT_SECRET: str = ""
 
-    # Frontend URL to redirect to after OAuth callback (with token in fragment)
+    # Frontend URL to redirect to after OAuth callback
     OAUTH_LOGIN_REDIRECT_URL: str = "http://localhost:3000/auth/callback"
+
+    # TTL for OAuth authorization codes stored in Redis (seconds)
+    OAUTH_CODE_TTL: int = 60
 
     # Allow OAuth-only users to set a password for password-based login
     OAUTH_ALLOW_SET_PASSWORD: bool = True
@@ -93,9 +99,28 @@ class Settings(BaseSettings):
         "Content-Type",
         "Accept",
         "Origin",
+        "X-CSRF-Token",
     ]
     CORS_ALLOW_CREDENTIALS: bool = False
+
+    # CSRF Protection (Double-Submit Cookie)
+    CSRF_ENABLED: bool = True
+    CSRF_COOKIE_NAME: str = "csrf_token"
+    CSRF_HEADER_NAME: str = "X-CSRF-Token"
+    CSRF_TOKEN_LENGTH: int = 32
     # /Auth & Security settings ===============================================
+
+    # Email =================================================================
+    EMAIL_BACKEND: str = "djast.utils.email_backends.console.ConsoleEmailBackend"
+    EMAIL_HOST: str = ""
+    EMAIL_PORT: int = 587
+    EMAIL_USE_TLS: bool = True
+    EMAIL_USE_SSL: bool = False
+    EMAIL_HOST_USER: str = ""
+    EMAIL_HOST_PASSWORD: str = ""
+    DEFAULT_FROM_EMAIL: str = ""
+    EMAIL_TEMPLATE_DIR: str = ""
+    # /Email ================================================================
 
     # Auth Rate Limits
     AUTH_RATE_LIMIT_SIGNUP: str = "5/minute"

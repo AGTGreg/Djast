@@ -49,7 +49,8 @@ All endpoints are mounted at `{APP_PREFIX}/auth` (default: `/api/v1/auth`). Ever
 | POST | `/deactivate` | Yes | Deactivate account and revoke all sessions |
 | GET | `/users/me` | Yes | Get current user info |
 | GET | `/oauth/{provider}/authorize` | No | Redirect to OAuth provider consent screen |
-| GET | `/oauth/{provider}/callback` | No | Handle OAuth callback (creates/links user, issues tokens) |
+| GET | `/oauth/{provider}/callback` | No | Handle OAuth callback (redirects with one-time code) |
+| POST | `/oauth/token` | No | Exchange one-time OAuth code for tokens |
 | DELETE | `/oauth/{provider}/link` | Yes | Unlink a social account |
 
 **Signup**
@@ -100,18 +101,23 @@ Returns a new access token and rotates the refresh cookie. Old refresh tokens ar
 # Single device
 curl -X POST http://localhost:8000/api/v1/auth/logout \
   -H "Authorization: Bearer eyJ..." \
-  --cookie "refresh_token=eyJ..."
+  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
+  --cookie "refresh_token=eyJ...; csrf_token=..."
 
 # All devices
 curl -X POST http://localhost:8000/api/v1/auth/logout-all \
-  -H "Authorization: Bearer eyJ..."
+  -H "Authorization: Bearer eyJ..." \
+  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
+  --cookie "csrf_token=..."
 ```
 
 **Change password**
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/change-password \
   -H "Authorization: Bearer eyJ..." \
+  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
   -H "Content-Type: application/json" \
+  --cookie "csrf_token=..." \
   -d '{"old_password": "Secret1!xx", "new_password": "NewPass1!yy"}'
 ```
 This revokes all sessions across all devices after changing the password.
@@ -150,10 +156,22 @@ When disabled, the OAuth endpoints return 404. Existing password auth is complet
    - Finds an existing `OAuthAccount` link → returns that user.
    - Finds an existing user with the same email → auto-links the OAuth identity to that account.
    - Creates a new user with an unusable password + a new `OAuthAccount` record.
-5. Backend issues the same JWT access + refresh tokens used by password auth.
-6. Backend redirects to `OAUTH_LOGIN_REDIRECT_URL` with the access token in the URL fragment (`#access_token=...&token_type=bearer&expires_in=1800`) and sets the refresh cookie.
+5. Backend issues JWT tokens and stores them behind a one-time authorization code in Redis (TTL: `OAUTH_CODE_TTL`, default 60 seconds).
+6. Backend redirects to `OAUTH_LOGIN_REDIRECT_URL?code={one-time-code}`. No tokens appear in the URL.
+7. Frontend POSTs the code to `POST /api/v1/auth/oauth/token` to receive the access token and refresh cookie.
 
-The frontend reads the token from the URL fragment and stores it. The refresh cookie works identically to password-based login.
+```bash
+# Step 7: Exchange the one-time code for tokens
+curl -X POST http://localhost:8000/api/v1/auth/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{"code": "the-one-time-code"}'
+```
+Response (200):
+```json
+{"access_token": "eyJ...", "token_type": "bearer", "expires_in": 1800}
+```
+
+The response also sets the `refresh_token` HTTP-only cookie and `csrf_token` cookie, identical to password-based login. The authorization code is single-use — replaying it returns 400.
 
 **Account linking:**
 
@@ -168,7 +186,9 @@ Users who signed up via OAuth have no password. They can set one to enable passw
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/set-password \
   -H "Authorization: Bearer eyJ..." \
+  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
   -H "Content-Type: application/json" \
+  --cookie "csrf_token=..." \
   -d '{"new_password": "MyNewPass1!"}'
 ```
 
@@ -178,7 +198,9 @@ This is controlled by `OAUTH_ALLOW_SET_PASSWORD` (default: `true`). Users who al
 
 ```bash
 curl -X DELETE http://localhost:8000/api/v1/auth/oauth/google/link \
-  -H "Authorization: Bearer eyJ..."
+  -H "Authorization: Bearer eyJ..." \
+  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
+  --cookie "csrf_token=..."
 ```
 
 Users cannot unlink their only authentication method. If an OAuth-only user with a single provider tries to unlink, they get a 400. They must either set a password or link another provider first.
@@ -271,7 +293,21 @@ Passwords are hashed with PBKDF2-SHA256 (1,200,000 iterations) and automatically
 
 **Security features**
 
-**Brute force protection** — After `ACCOUNT_LOGIN_MAX_ATTEMPTS` (default: 5) failed login attempts, the account is locked for `ACCOUNT_LOGIN_LOCKOUT_SECONDS` (default: 300). Tracked per-username in Redis. Set `ACCOUNT_LOGIN_MAX_ATTEMPTS=0` to disable.
+**CSRF protection** — All state-changing requests (POST, PUT, PATCH, DELETE) are automatically checked via a global CSRF dependency, similar to Django's `CsrfViewMiddleware`. On login and token refresh, the server sets a `csrf_token` cookie (non-HttpOnly, readable by JavaScript). The frontend must read the cookie and send its value in the `X-CSRF-Token` header. The server compares the two using constant-time comparison. Requests without a matching header receive 403. Endpoints that don't need CSRF (signup, login, refresh, OAuth token exchange) are marked with `@csrf_exempt`. CSRF can be disabled globally by setting `CSRF_ENABLED=false`.
+
+To exempt your own endpoints from CSRF, use the `@csrf_exempt` decorator (place it between `@router` and any other decorators like `@limiter.limit`):
+
+```python
+from djast.utils.csrf import csrf_exempt
+
+@router.post("/my-webhook")
+@csrf_exempt
+@limiter.limit("10/minute")
+async def my_webhook(request: Request):
+    ...
+```
+
+**Brute force protection** — After `ACCOUNT_LOGIN_MAX_ATTEMPTS` (default: 5) failed login attempts, the account is locked for `ACCOUNT_LOGIN_LOCKOUT_SECONDS` (default: 300). Tracked per-username in Redis. Set `ACCOUNT_LOGIN_MAX_ATTEMPTS=0` to disable. If Redis is unavailable, `ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN` (default: `true`) determines whether login is allowed (fail-open) or blocked (fail-closed).
 
 **Token blacklisting** — Redis-backed. Single-device logout blacklists the specific access token JTI. All-device logout sets a `min_iat` timestamp — any access token issued before that time is rejected. If Redis is unavailable, `FALLBACK_IS_BLACKLISTED` (default: `true`) determines whether tokens are treated as blacklisted (fail-secure) or valid (fail-open).
 
@@ -304,7 +340,12 @@ All settings are in `app/djast/settings.py` and can be overridden via environmen
 | `PASSWORD_VALIDATION_REGEX` | *(see above)* | Regex for password strength validation |
 | `ACCOUNT_LOGIN_MAX_ATTEMPTS` | `5` | Failed logins before lockout (0 = disabled) |
 | `ACCOUNT_LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration in seconds |
+| `ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN` | `true` | Allow login when Redis lockout check fails |
 | `FALLBACK_IS_BLACKLISTED` | `true` | Treat tokens as blacklisted when Redis is down |
+| `CSRF_ENABLED` | `true` | Enable CSRF double-submit cookie protection |
+| `CSRF_COOKIE_NAME` | `"csrf_token"` | Name of the CSRF cookie |
+| `CSRF_HEADER_NAME` | `"X-CSRF-Token"` | Header name for CSRF token |
+| `CSRF_TOKEN_LENGTH` | `32` | Length of generated CSRF tokens |
 | `OAUTH_GOOGLE_ENABLED` | `false` | Enable Google OAuth login |
 | `OAUTH_GOOGLE_CLIENT_ID` | `""` | Google OAuth client ID |
 | `OAUTH_GOOGLE_CLIENT_SECRET` | `""` | Google OAuth client secret |
@@ -313,6 +354,7 @@ All settings are in `app/djast/settings.py` and can be overridden via environmen
 | `OAUTH_GITHUB_CLIENT_SECRET` | `""` | GitHub OAuth client secret |
 | `OAUTH_LOGIN_REDIRECT_URL` | `"http://localhost:3000/auth/callback"` | Frontend URL to redirect to after OAuth callback |
 | `OAUTH_ALLOW_SET_PASSWORD` | `true` | Allow OAuth-only users to set a password |
+| `OAUTH_CODE_TTL` | `60` | One-time OAuth authorization code TTL in seconds |
 
 **Rate limit settings:**
 

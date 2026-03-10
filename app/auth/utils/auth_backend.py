@@ -129,8 +129,10 @@ async def _check_account_lockout(username: str) -> None:
     except auth_exceptions.AccountLockedOut:
         raise
     except Exception:
-        # If Redis is down, fail open — don't block legitimate users.
-        pass
+        if not settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN:
+            raise auth_exceptions.AccountLockedOut(
+                "Login unavailable. Please try again later."
+            )
 
 
 async def _record_failed_login(username: str) -> None:
@@ -295,7 +297,7 @@ class TokenBlacklist():
             raise ValueError("Invalid token data for blacklisting.")
 
         now = dj_timezone.now().timestamp()
-        ttl = int(token_data.exp - now)
+        ttl = int(token_data.exp - now) + 10  # buffer for clock skew
         if ttl > 0:
             await redis_client.setex(
                 f"{self.token_prefix}{token_data.jti}", ttl, "revoked")
@@ -349,17 +351,17 @@ async def validate_access_token(
     try:
         access_token_data = decode_token(access_token)
     except (InvalidTokenError, ValidationError):
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
 
     if access_token_data.type != "access":
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
 
     current_time = int(dj_timezone.now().timestamp())
     if access_token_data.exp < current_time:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
 
     if await TokenBlacklist().is_blacklisted(access_token_data):
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
 
     return access_token_data
 
@@ -736,7 +738,7 @@ async def get_current_user(
             session=session, token_data=token_data
         )
     except (auth_exceptions.InvalidToken, auth_exceptions.UserDoesNotExist):
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
 
 
 async def deactivate_user(

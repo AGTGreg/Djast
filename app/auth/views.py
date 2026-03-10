@@ -6,6 +6,7 @@ from fastapi import (
     HTTPException,
     status,
     Body,
+    Query,
     Request,
     Response
 )
@@ -34,6 +35,12 @@ from auth.utils import oauth as oauth_utils
 from auth import exceptions as auth_exceptions
 
 from djast.rate_limit import limiter
+from djast.utils.csrf import (
+    csrf_exempt,
+    generate_csrf_token,
+    set_csrf_cookie,
+    delete_csrf_cookie,
+)
 
 router = APIRouter()
 
@@ -48,6 +55,7 @@ if settings.AUTH_USER_MODEL_TYPE == "email":
     response_model=CreateUserResponse,
     status_code=status.HTTP_201_CREATED
 )
+@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_SIGNUP)
 async def signup(
     request: Request,
@@ -92,6 +100,7 @@ async def signup(
 
 
 @router.post("/token", response_model=AccessToken)
+@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_LOGIN)
 async def login(
     request: Request,
@@ -110,6 +119,7 @@ async def login(
             password=form_data.password
         )
         set_refresh_cookie(response, refresh_token)
+        set_csrf_cookie(response, generate_csrf_token())
         return AccessToken(
             access_token=access_token,
             token_type="bearer",
@@ -121,11 +131,11 @@ async def login(
             detail="Too many failed login attempts. Try again later."
         )
     except auth_exceptions.UserIsInactive:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
     except auth_exceptions.UserDoesNotExist:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
     except auth_exceptions.InvalidCredentials:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -134,6 +144,7 @@ async def login(
 
 
 @router.post("/refresh", response_model=AccessToken)
+@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_REFRESH)
 async def refresh_token(
     request: Request,
@@ -158,17 +169,18 @@ async def refresh_token(
             refresh_token=refresh_token
         )
         set_refresh_cookie(response, refresh_token)
+        set_csrf_cookie(response, generate_csrf_token())
         return AccessToken(
             access_token=access_token,
             token_type="bearer",
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
     except auth_exceptions.InvalidToken:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
     except auth_exceptions.RefreshTokenExpired:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
     except auth_exceptions.UserDoesNotExist:
-        raise auth_exceptions.CREDENTIALS_EXCEPTION
+        raise auth_exceptions.credentials_exception()
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -182,7 +194,7 @@ async def change_password(
     request: Request,
     password_change: Annotated[PasswordChange, Body()],
     user: Annotated[User, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_async_session)]
+    session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> BaseResponse:
     if not await user.authenticate(
         session,
@@ -207,7 +219,7 @@ async def logout(
     request: Request,
     response: Response,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
-    session: Annotated[AsyncSession, Depends(get_async_session)]
+    session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> None:
     """
     Standard Logout: Revokes ONLY the token used to make this request.
@@ -222,6 +234,7 @@ async def logout(
 
     response.delete_cookie(
         key="refresh_token", path=f"{settings.APP_PREFIX}/auth")
+    delete_csrf_cookie(response)
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
@@ -230,7 +243,7 @@ async def logout_all_devices(
     request: Request,
     response: Response,
     token_data: Annotated[TokenData, Depends(auth_backend.validate_access_token)],
-    session: Annotated[AsyncSession, Depends(get_async_session)]
+    session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> None:
     """
     Global Logout: Revokes ALL tokens for the user.
@@ -241,6 +254,7 @@ async def logout_all_devices(
     )
     response.delete_cookie(
         key="refresh_token", path=f"{settings.APP_PREFIX}/auth")
+    delete_csrf_cookie(response)
 
 
 @router.post("/deactivate", status_code=status.HTTP_204_NO_CONTENT)
@@ -248,7 +262,7 @@ async def logout_all_devices(
 async def deactivate_account(
     request: Request,
     user: Annotated[User, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_async_session)]
+    session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> None:
     """
     Deactivate the authenticated user's account.
@@ -300,9 +314,9 @@ async def oauth_authorize(
 async def oauth_callback(
     request: Request,
     provider: str,
-    code: str,
-    state: str,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    code: str = Query(max_length=2048),
+    state: str = Query(max_length=256),
 ) -> RedirectResponse:
     """Handle OAuth callback, create/link user, issue tokens."""
     try:
@@ -343,18 +357,46 @@ async def oauth_callback(
         expires_at=auth_backend._dt_from_ts(refresh_token_data.exp),
     )
 
-    # Redirect to frontend with access token in URL fragment
-    redirect_url = (
-        f"{settings.OAUTH_LOGIN_REDIRECT_URL}"
-        f"#access_token={access_token}"
-        f"&token_type=bearer"
-        f"&expires_in={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}"
+    # Store tokens behind a one-time authorization code
+    auth_code = await oauth_utils.store_oauth_tokens(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user_id=user.id,
     )
-    response = RedirectResponse(
+
+    redirect_url = (
+        f"{settings.OAUTH_LOGIN_REDIRECT_URL}?code={auth_code}"
+    )
+    return RedirectResponse(
         url=redirect_url, status_code=status.HTTP_302_FOUND
     )
-    set_refresh_cookie(response, refresh_token)
-    return response
+
+
+@router.post("/oauth/token", response_model=AccessToken)
+@csrf_exempt
+@limiter.limit(settings.AUTH_RATE_LIMIT_OAUTH)
+async def oauth_token_exchange(
+    request: Request,
+    response: Response,
+    code: str = Body(embed=True, max_length=256),
+) -> AccessToken:
+    """Exchange a one-time OAuth authorization code for tokens."""
+    try:
+        token_data = await oauth_utils.consume_oauth_code(code)
+    except auth_exceptions.OAuthError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired authorization code.",
+        )
+
+    set_refresh_cookie(response, token_data["refresh_token"])
+    set_csrf_cookie(response, generate_csrf_token())
+
+    return AccessToken(
+        access_token=token_data["access_token"],
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
 
 @router.delete(

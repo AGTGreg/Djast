@@ -126,13 +126,11 @@ class AbstractBaseUser(models.Model):
         is_correct = await check_password(
             raw_password, self.password, setter=rehash_setter)
 
-        if not self.is_active:
-            return False
-
-        if is_correct:
+        if is_correct and self.is_active:
             await self.update(session, last_login=dj_timezone.now())
+            return True
 
-        return is_correct
+        return False
 
 
 class AbstractEmailUser(AbstractBaseUser):

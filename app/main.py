@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from djast.settings import settings
 from djast.urls import api_router
+from djast.utils.csrf import csrf_protect
 
 
 def create_app() -> FastAPI:
@@ -10,6 +11,7 @@ def create_app() -> FastAPI:
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         debug=settings.DEBUG,
+        dependencies=[Depends(csrf_protect)],
     )
 
     from djast.rate_limit import limiter

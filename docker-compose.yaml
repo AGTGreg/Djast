@@ -21,7 +21,7 @@ services:
       - ./app:/app
       - app_volume:/vol/app
     ports:
-      - "8000:8000"
+      - "8001:8000"
     env_file:
       - dev.env
     command: [ "fastapi", "dev", "main.py", "--host", "0.0.0.0", "--port", "8000", "--reload" ]

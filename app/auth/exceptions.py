@@ -51,8 +51,10 @@ class OAuthError(Exception):
     pass
 
 
-CREDENTIALS_EXCEPTION = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail="Invalid credentials.",
-    headers={"WWW-Authenticate": "Bearer"},
-)
+def credentials_exception() -> HTTPException:
+    """Return a fresh 401 HTTPException for invalid credentials."""
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

@@ -4,6 +4,7 @@ import importlib
 import asyncio
 import secrets
 from datetime import timedelta
+from unittest.mock import patch
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import clear_mappers
@@ -21,8 +22,30 @@ from djast.db.models import Base
 from djast.utils import timezone as dj_timezone
 
 
+def _patch_time_ahead(seconds: int = 2):
+    """Patch dj_timezone.now to return current time + offset.
+
+    Used instead of asyncio.sleep() to ensure min_iat > token.iat without
+    introducing real delays that cause flaky Redis-related failures.
+    """
+    real_now = dj_timezone.now
+    return patch.object(
+        auth.utils.auth_backend.dj_timezone,
+        "now",
+        side_effect=lambda: real_now() + timedelta(seconds=seconds),
+    )
+
+
 def _extract_access_token(token_response_json: dict) -> str:
     return token_response_json["access_token"]
+
+
+def _csrf_headers(client: AsyncClient) -> dict[str, str]:
+    """Read the csrf_token cookie from the client jar and return it as a header."""
+    csrf = client.cookies.get(settings.CSRF_COOKIE_NAME)
+    if csrf:
+        return {settings.CSRF_HEADER_NAME: csrf}
+    return {}
 
 
 def _auth_prefix() -> str:
@@ -552,7 +575,7 @@ async def test_change_password_success_and_login_with_new_password(auth_client):
 
     change_resp = await client.post(
         f"{_auth_prefix()}/change-password",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
         json={"old_password": old_password, "new_password": new_password},
     )
     assert change_resp.status_code == 200, change_resp.text
@@ -586,7 +609,7 @@ async def test_change_password_wrong_old_password_returns_400(auth_client):
 
     change_resp = await client.post(
         f"{_auth_prefix()}/change-password",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
         json={"old_password": "WrongPassword123!", "new_password": _strong_password("Z")},
     )
     assert change_resp.status_code == 400
@@ -600,7 +623,7 @@ async def test_logout_revoke_blacklists_current_access_token(auth_client):
 
     revoke_resp = await client.post(
         f"{_auth_prefix()}/logout",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
     )
     assert revoke_resp.status_code == 204
 
@@ -653,11 +676,16 @@ async def test_logout_with_stale_refresh_cookie_revokes_replacement_refresh_toke
     assert new_row.revoked_at is None
 
     # Simulate a stale cookie at logout time.
+    # We must include the csrf_token cookie alongside refresh_token because
+    # setting Cookie header explicitly replaces the entire client cookie jar.
+    csrf = _csrf_headers(client)
+    csrf_cookie = client.cookies.get(settings.CSRF_COOKIE_NAME, "")
     revoke_resp = await client.post(
         f"{_auth_prefix()}/logout",
         headers={
             "Authorization": f"Bearer {access_token}",
-            "Cookie": f"refresh_token={old_refresh}",
+            "Cookie": f"refresh_token={old_refresh}; {settings.CSRF_COOKIE_NAME}={csrf_cookie}",
+            **csrf,
         },
     )
     assert revoke_resp.status_code == 204, revoke_resp.text
@@ -775,7 +803,7 @@ async def test_logout_current_device_keeps_other_device_logged_in(auth_client):
         # Device A logs out (revoke current token + refresh token)
         revoke = await device_a.post(
             f"{_auth_prefix()}/logout",
-            headers={"Authorization": f"Bearer {access_a}"},
+            headers={"Authorization": f"Bearer {access_a}", **_csrf_headers(device_a)},
         )
         assert revoke.status_code == 204
 
@@ -828,35 +856,35 @@ async def test_logout_all_devices_revokes_both_devices(auth_client):
         refresh_b = token_b.cookies.get("refresh_token")
         assert refresh_b
 
-        # Ensure min_iat will be strictly greater than both token iat values.
-        await asyncio.sleep(1.1)
+        # Advance time so min_iat will be strictly greater than both token
+        # iat values, without a real sleep that causes flaky Redis failures.
+        with _patch_time_ahead(seconds=2):
+            revoke_all = await device_a.post(
+                f"{_auth_prefix()}/logout-all",
+                headers={"Authorization": f"Bearer {access_a}", **_csrf_headers(device_a)},
+            )
+            assert revoke_all.status_code == 204
 
-        revoke_all = await device_a.post(
-            f"{_auth_prefix()}/logout-all",
-            headers={"Authorization": f"Bearer {access_a}"},
-        )
-        assert revoke_all.status_code == 204
+            # Neither device should have access now
+            me_a = await device_a.get(
+                f"{_auth_prefix()}/users/me",
+                headers={"Authorization": f"Bearer {access_a}"},
+            )
+            assert me_a.status_code == 401
 
-        # Neither device should have access now
-        me_a = await device_a.get(
-            f"{_auth_prefix()}/users/me",
-            headers={"Authorization": f"Bearer {access_a}"},
-        )
-        assert me_a.status_code == 401
+            me_b = await device_b.get(
+                f"{_auth_prefix()}/users/me",
+                headers={"Authorization": f"Bearer {access_b}"},
+            )
+            assert me_b.status_code == 401
 
-        me_b = await device_b.get(
-            f"{_auth_prefix()}/users/me",
-            headers={"Authorization": f"Bearer {access_b}"},
-        )
-        assert me_b.status_code == 401
-
-        # And refresh should also fail from device B
-        refresh_resp = await device_b.post(
-            f"{_auth_prefix()}/refresh",
-            headers={"Cookie": f"refresh_token={refresh_b}"},
-        )
-        assert refresh_resp.status_code == 401
-        assert refresh_resp.json()["detail"] == "Invalid credentials."
+            # And refresh should also fail from device B
+            refresh_resp = await device_b.post(
+                f"{_auth_prefix()}/refresh",
+                headers={"Cookie": f"refresh_token={refresh_b}"},
+            )
+            assert refresh_resp.status_code == 401
+            assert refresh_resp.json()["detail"] == "Invalid credentials."
 
 
 @pytest.mark.asyncio
@@ -864,20 +892,19 @@ async def test_logout_all_devices_blacklists_access_token(auth_client):
     client, mode = auth_client
     _user_id, access_token = await _signup_and_login(client, mode)
 
-    # Ensure min_iat will be strictly greater than token.iat.
-    await asyncio.sleep(1.1)
+    # Advance time so min_iat > token.iat without a real sleep.
+    with _patch_time_ahead(seconds=2):
+        resp = await client.post(
+            f"{_auth_prefix()}/logout-all",
+            headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        )
+        assert resp.status_code == 204
 
-    resp = await client.post(
-        f"{_auth_prefix()}/logout-all",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    assert resp.status_code == 204
-
-    me_resp = await client.get(
-        f"{_auth_prefix()}/users/me",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    assert me_resp.status_code == 401
+        me_resp = await client.get(
+            f"{_auth_prefix()}/users/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert me_resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -893,25 +920,24 @@ async def test_deactivate_account_disables_login_and_token(auth_client):
     assert token_resp.status_code == 200, token_resp.text
     access_token = _extract_access_token(token_resp.json())
 
-    # Ensure min_iat will be strictly greater than token.iat.
-    await asyncio.sleep(1.1)
+    # Advance time so min_iat > token.iat without a real sleep.
+    with _patch_time_ahead(seconds=2):
+        deactivate_resp = await client.post(
+            f"{_auth_prefix()}/deactivate",
+            headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        )
+        assert deactivate_resp.status_code == 204
 
-    deactivate_resp = await client.post(
-        f"{_auth_prefix()}/deactivate",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    assert deactivate_resp.status_code == 204
+        # Using the old token should fail
+        me_resp = await client.get(
+            f"{_auth_prefix()}/users/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert me_resp.status_code == 401
 
-    # Using the old token should fail
-    me_resp = await client.get(
-        f"{_auth_prefix()}/users/me",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    assert me_resp.status_code == 401
-
-    # Logging in again should fail due to inactive user
-    token_again = await client.post(f"{_auth_prefix()}/token", data=login_form)
-    assert token_again.status_code == 401
+        # Logging in again should fail due to inactive user
+        token_again = await client.post(f"{_auth_prefix()}/token", data=login_form)
+        assert token_again.status_code == 401
     assert token_again.json()["detail"] == "Invalid credentials."
 
 
@@ -945,3 +971,233 @@ async def test_signup_password_length_101_is_rejected(auth_client):
     resp = await client.post(f"{_auth_prefix()}/signup", json=payload)
     # Pydantic max_length=100 rejects before the regex validator runs.
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Tests: CSRF double-submit cookie protection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_csrf_protected_endpoint_rejects_missing_header(auth_client):
+    """CSRF-protected endpoints must return 403 when X-CSRF-Token header is missing."""
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    # change-password without CSRF header should fail
+    resp = await client.post(
+        f"{_auth_prefix()}/change-password",
+        json={"old_password": _strong_password(), "new_password": _strong_password("new")},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert resp.status_code == 403
+    assert "csrf" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_csrf_protected_endpoint_rejects_wrong_token(auth_client):
+    """CSRF-protected endpoints must return 403 when header doesn't match cookie."""
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    resp = await client.post(
+        f"{_auth_prefix()}/change-password",
+        json={"old_password": _strong_password(), "new_password": _strong_password("new")},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            settings.CSRF_HEADER_NAME: "wrong-csrf-token-value",
+        },
+    )
+    assert resp.status_code == 403
+    assert "csrf" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_csrf_protected_endpoint_succeeds_with_correct_token(auth_client):
+    """CSRF-protected endpoints succeed when header matches cookie."""
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    resp = await client.post(
+        f"{_auth_prefix()}/change-password",
+        json={"old_password": _strong_password(), "new_password": _strong_password("new")},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            **_csrf_headers(client),
+        },
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_csrf_bypass_when_disabled(auth_client):
+    """When CSRF_ENABLED=False, CSRF checks should be skipped."""
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    old_csrf = settings.CSRF_ENABLED
+    settings.CSRF_ENABLED = False
+    try:
+        # No CSRF header, should still succeed
+        resp = await client.post(
+            f"{_auth_prefix()}/change-password",
+            json={"old_password": _strong_password(), "new_password": _strong_password("new")},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert resp.status_code == 200
+    finally:
+        settings.CSRF_ENABLED = old_csrf
+
+
+@pytest.mark.asyncio
+async def test_login_sets_csrf_cookie(auth_client):
+    """Login should set a csrf_token cookie alongside the refresh_token."""
+    client, mode = auth_client
+    password = _strong_password()
+    signup_payload, login_form = _new_user_payload(mode, password=password)
+
+    await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
+    token_resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
+    assert token_resp.status_code == 200
+
+    csrf_cookie = client.cookies.get(settings.CSRF_COOKIE_NAME)
+    assert csrf_cookie, "Login should set a csrf_token cookie"
+    assert len(csrf_cookie) > 0
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_csrf_cookie(auth_client):
+    """Logout should clear the csrf_token cookie."""
+    client, mode = auth_client
+    _user_id, access_token = await _signup_and_login(client, mode)
+
+    assert client.cookies.get(settings.CSRF_COOKIE_NAME), "Should have csrf cookie after login"
+
+    await client.post(
+        f"{_auth_prefix()}/logout",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            **_csrf_headers(client),
+        },
+    )
+    # After logout, csrf_token cookie should be deleted
+    csrf_cookie = client.cookies.get(settings.CSRF_COOKIE_NAME)
+    assert not csrf_cookie, "Logout should clear the csrf_token cookie"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Lockout fail-open configuration
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_lockout_fail_open_allows_login_when_redis_down(
+    auth_client,
+    monkeypatch,
+):
+    """With ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN=True, login works even if Redis is down."""
+    client, mode = auth_client
+    password = _strong_password()
+    signup_payload, login_form = _new_user_payload(mode, password=password)
+
+    await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
+
+    old_fail_open = settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN
+    settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN = True
+    try:
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("redis down")
+
+        # Mock only the lockout check functions, not the full redis client
+        monkeypatch.setattr(
+            auth.utils.auth_backend.redis_client, "get", _boom
+        )
+        monkeypatch.setattr(
+            auth.utils.auth_backend.redis_client, "incr", _boom
+        )
+        monkeypatch.setattr(
+            auth.utils.auth_backend.redis_client, "expire", _boom
+        )
+
+        resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
+        assert resp.status_code == 200, resp.text
+    finally:
+        settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN = old_fail_open
+
+
+@pytest.mark.asyncio
+async def test_lockout_fail_closed_blocks_login_when_redis_down(
+    auth_client,
+    monkeypatch,
+):
+    """With ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN=False, login fails if Redis is down."""
+    client, mode = auth_client
+    password = _strong_password()
+    signup_payload, login_form = _new_user_payload(mode, password=password)
+
+    await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
+
+    old_fail_open = settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN
+    settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN = False
+    try:
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr(
+            auth.utils.auth_backend.redis_client, "get", _boom
+        )
+
+        resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
+        assert resp.status_code == 429, resp.text
+    finally:
+        settings.ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN = old_fail_open
+
+
+# ---------------------------------------------------------------------------
+# Tests: Username validation (Django mode only)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_signup_django_username_with_invalid_chars_rejected(auth_client):
+    """Username containing invalid characters should be rejected in django mode."""
+    client, mode = auth_client
+    if mode != "django":
+        pytest.skip("Username validation only applies to django mode")
+
+    payload = {
+        "username": "user name with spaces!",
+        "email": "invalid_chars@example.com",
+        "password": _strong_password(),
+    }
+    resp = await client.post(f"{_auth_prefix()}/signup", json=payload)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_signup_django_empty_username_rejected(auth_client):
+    """Empty username should be rejected in django mode."""
+    client, mode = auth_client
+    if mode != "django":
+        pytest.skip("Username validation only applies to django mode")
+
+    payload = {
+        "username": "",
+        "email": "empty_user@example.com",
+        "password": _strong_password(),
+    }
+    resp = await client.post(f"{_auth_prefix()}/signup", json=payload)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_signup_django_valid_username_accepted(auth_client):
+    """Usernames with allowed characters (alphanumeric, dots, @, +, -) should work."""
+    client, mode = auth_client
+    if mode != "django":
+        pytest.skip("Username validation only applies to django mode")
+
+    payload = {
+        "username": "valid.user-name_123@+test",
+        "email": "valid_user@example.com",
+        "password": _strong_password(),
+    }
+    resp = await client.post(f"{_auth_prefix()}/signup", json=payload)
+    assert resp.status_code == 201, resp.text

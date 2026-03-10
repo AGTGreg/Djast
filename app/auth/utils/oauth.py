@@ -5,6 +5,7 @@ user creation/linking. Uses Authlib for OAuth2/OIDC protocol handling.
 """
 from __future__ import annotations
 
+import json
 import secrets
 import re
 from typing import Any
@@ -22,6 +23,7 @@ from auth import exceptions as auth_exceptions
 # OAuth state token TTL in seconds
 _OAUTH_STATE_TTL = 300  # 5 minutes
 _OAUTH_STATE_PREFIX = "oauth_state:"
+_OAUTH_CODE_PREFIX = "oauth_code:"
 
 # Provider configuration registry
 PROVIDER_CONFIGS: dict[str, dict[str, Any]] = {
@@ -402,3 +404,44 @@ async def _generate_username(
         suffix += 1
 
     return candidate
+
+
+# OAuth authorization code exchange ==========================================
+
+async def store_oauth_tokens(
+    access_token: str,
+    refresh_token: str,
+    user_id: int,
+) -> str:
+    """Store tokens in Redis keyed by a one-time authorization code.
+
+    Returns the code for the frontend to exchange via POST.
+    """
+    code = secrets.token_urlsafe(32)
+    payload = json.dumps({
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user_id": user_id,
+    })
+    await redis_client.setex(
+        f"{_OAUTH_CODE_PREFIX}{code}",
+        settings.OAUTH_CODE_TTL,
+        payload,
+    )
+    return code
+
+
+async def consume_oauth_code(code: str) -> dict:
+    """Consume a one-time authorization code and return stored tokens.
+
+    Raises:
+        auth_exceptions.OAuthError: If the code is invalid or expired.
+    """
+    key = f"{_OAUTH_CODE_PREFIX}{code}"
+    payload = await redis_client.get(key)
+    if not payload:
+        raise auth_exceptions.OAuthError(
+            "Invalid or expired authorization code."
+        )
+    await redis_client.delete(key)
+    return json.loads(payload)
