@@ -20,11 +20,15 @@ from ulid import ULID
 from djast.settings import settings
 from djast.database import get_async_session
 from djast.utils import timezone as dj_timezone
-from auth.models import User, RefreshToken
+from auth.models import User, RefreshToken, EmailAddress
 from auth.schemas import TokenData, UserCreate
 from auth import exceptions as auth_exceptions
 
 from auth.utils.hashers import check_password
+from auth.utils.tokens import (
+    get_email_verification_token_generator,
+    get_password_reset_token_generator,
+)
 
 
 def set_refresh_cookie(response: "Response", token: str) -> None:
@@ -156,6 +160,71 @@ async def _clear_failed_logins(username: str) -> None:
         await redis_client.delete(key)
     except Exception:
         pass
+
+
+# Email cooldown ==============================================================
+_EMAIL_COOLDOWN_PREFIX = "email_cooldown:"
+
+
+async def check_email_cooldown(user_id: int, purpose: str) -> None:
+    """Raise EmailCooldown if an email was sent within the cooldown period."""
+    key = f"{_EMAIL_COOLDOWN_PREFIX}{purpose}:{user_id}"
+    try:
+        if await redis_client.get(key):
+            raise auth_exceptions.EmailCooldown(
+                "Please wait before requesting another email."
+            )
+        await redis_client.setex(key, settings.EMAIL_COOLDOWN_SECONDS, "1")
+    except auth_exceptions.EmailCooldown:
+        raise
+    except Exception:
+        # Cooldown must never break the email flow.
+        pass
+
+
+async def send_verification_email(
+    user: User,
+    email_address: EmailAddress,
+) -> None:
+    """Generate a verification token and send the verification email."""
+    await check_email_cooldown(user.id, "email-verify")
+
+    token_gen = get_email_verification_token_generator()
+    token = token_gen.make_token(user, email_address)
+    verification_url = f"{settings.EMAIL_VERIFICATION_URL}?token={token}"
+
+    from djast.utils.email import send_template_email
+    await send_template_email(
+        subject="Verify your email address",
+        to=[email_address.email],
+        template_name="verify_email.html",
+        context={
+            "verification_url": verification_url,
+            "project_name": settings.PROJECT_NAME,
+            "expiry_hours": settings.EMAIL_VERIFICATION_TOKEN_EXPIRE_SECONDS // 3600,
+        },
+    )
+
+
+async def send_password_reset_email(user: User, email: str) -> None:
+    """Generate a password reset token and send the reset email."""
+    await check_email_cooldown(user.id, "password-reset")
+
+    token_gen = get_password_reset_token_generator()
+    token = token_gen.make_token(user)
+    reset_url = f"{settings.PASSWORD_RESET_URL}?token={token}"
+
+    from djast.utils.email import send_template_email
+    await send_template_email(
+        subject="Reset your password",
+        to=[email],
+        template_name="reset_password.html",
+        context={
+            "reset_url": reset_url,
+            "project_name": settings.PROJECT_NAME,
+            "expiry_minutes": settings.PASSWORD_RESET_TOKEN_EXPIRE_SECONDS // 60,
+        },
+    )
 
 
 # DateTime Utilities ==========================================================
@@ -437,6 +506,24 @@ async def create_user(session: AsyncSession, user_data: UserCreate) -> User:
 
     new_user = await User.create_user(session, **user_data.model_dump())
 
+    # Create EmailAddress record and send verification email if applicable
+    user_email = getattr(new_user, "email", "") or ""
+    if user_email:
+        email_addr = await EmailAddress.objects(session).create(
+            user_id=new_user.id,
+            email=user_email,
+            verified=False,
+            primary=True,
+        )
+        if settings.EMAIL_VERIFICATION != "none":
+            try:
+                await send_verification_email(new_user, email_addr)
+            except auth_exceptions.EmailCooldown:
+                pass
+            except Exception:
+                # Email send failure must never block signup
+                pass
+
     return new_user
 
 
@@ -486,6 +573,16 @@ async def authenticate_user(
         raise auth_exceptions.InvalidCredentials("Invalid credentials.")
 
     await _clear_failed_logins(username)
+
+    # Email verification gate (mandatory mode)
+    if settings.EMAIL_VERIFICATION == "mandatory":
+        email_addr = await EmailAddress.objects(session).get(
+            user_id=user.id, primary=True,
+        )
+        if email_addr and not email_addr.verified:
+            raise auth_exceptions.EmailNotVerified(
+                "Email address not verified."
+            )
 
     access_token_data, access_token = encode_token(
         user_id=user.id, token_type="access")

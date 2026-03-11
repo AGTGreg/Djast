@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from djast.settings import settings
 from djast.database import get_async_session
-from auth.models import User, OAuthAccount
+from auth.models import User, OAuthAccount, EmailAddress
 from auth.schemas import (
     UserRead,
     UserCreate,
@@ -25,7 +25,14 @@ from auth.schemas import (
     BaseResponse,
     AccessToken,
     CreateUserResponse,
-    TokenData
+    TokenData,
+    VerifyEmailRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+)
+from auth.utils.tokens import (
+    get_email_verification_token_generator,
+    get_password_reset_token_generator,
 )
 
 from auth.forms import OAuth2EmailRequestForm
@@ -124,6 +131,11 @@ async def login(
             access_token=access_token,
             token_type="bearer",
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
+    except auth_exceptions.EmailNotVerified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required.",
         )
     except auth_exceptions.AccountLockedOut:
         raise HTTPException(
@@ -280,6 +292,167 @@ async def read_users_me(
     user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     return user
+
+
+# Email Verification & Password Reset =========================================
+
+@router.post("/verify-email", response_model=BaseResponse)
+@csrf_exempt
+@limiter.limit(settings.AUTH_RATE_LIMIT_VERIFY_EMAIL)
+async def verify_email(
+    request: Request,
+    payload: Annotated[VerifyEmailRequest, Body()],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> BaseResponse:
+    """Verify a user's email address using an HMAC token."""
+    token_gen = get_email_verification_token_generator()
+    user_id, is_parseable = token_gen.validate_token(payload.token)
+
+    if not is_parseable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+
+    user = await User.objects(session).get(id=user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+
+    email_addr = await EmailAddress.objects(session).get(
+        user_id=user.id, primary=True,
+    )
+    if not email_addr:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+
+    if not token_gen.check_token(user, payload.token, email_addr):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+
+    await email_addr.update(session, verified=True)
+    return BaseResponse(message="Email verified successfully.")
+
+
+@router.post("/resend-verification", response_model=BaseResponse)
+@limiter.limit(settings.AUTH_RATE_LIMIT_RESEND_VERIFICATION)
+async def resend_verification(
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> BaseResponse:
+    """Resend the email verification link to the authenticated user."""
+    email_addr = await EmailAddress.objects(session).get(
+        user_id=user.id, primary=True,
+    )
+    if not email_addr:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address to verify.",
+        )
+
+    if email_addr.verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is already verified.",
+        )
+
+    try:
+        await auth_backend.send_verification_email(user, email_addr)
+    except auth_exceptions.EmailCooldown:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Please wait before requesting another verification email.",
+        )
+
+    return BaseResponse(message="Verification email sent.")
+
+
+@router.post("/forgot-password", response_model=BaseResponse)
+@csrf_exempt
+@limiter.limit(settings.AUTH_RATE_LIMIT_PASSWORD_RESET_REQUEST)
+async def forgot_password(
+    request: Request,
+    payload: Annotated[ForgotPasswordRequest, Body()],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> BaseResponse:
+    """Request a password reset email.
+
+    Always returns the same response regardless of whether the email
+    exists, to prevent user enumeration.
+    """
+    response_msg = (
+        "If an account with that email exists, a reset link has been sent."
+    )
+
+    email_addr = await EmailAddress.objects(session).get(email=payload.email)
+    if not email_addr:
+        return BaseResponse(message=response_msg)
+
+    user = await User.objects(session).get(id=email_addr.user_id, is_active=True)
+    if not user:
+        return BaseResponse(message=response_msg)
+
+    try:
+        await auth_backend.send_password_reset_email(user, email_addr.email)
+    except (auth_exceptions.EmailCooldown, Exception):
+        # Silently swallow errors to avoid revealing user existence
+        pass
+
+    return BaseResponse(message=response_msg)
+
+
+@router.post("/reset-password", response_model=BaseResponse)
+@csrf_exempt
+@limiter.limit(settings.AUTH_RATE_LIMIT_PASSWORD_RESET_CONFIRM)
+async def reset_password(
+    request: Request,
+    payload: Annotated[ResetPasswordRequest, Body()],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> BaseResponse:
+    """Reset a user's password using a valid reset token."""
+    token_gen = get_password_reset_token_generator()
+    user_id, is_parseable = token_gen.validate_token(payload.token)
+
+    if not is_parseable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
+        )
+
+    user = await User.objects(session).get(id=user_id, is_active=True)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
+        )
+
+    if not token_gen.check_token(user, payload.token):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
+        )
+
+    try:
+        await user.set_password(payload.new_password)
+    except auth_exceptions.PasswordIsWeak as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    await user.save(session)
+    await auth_backend.logout_user_all_devices(
+        session=session, user_id=user.id,
+    )
+
+    return BaseResponse(message="Password reset successfully.")
 
 
 # OAuth Endpoints =============================================================

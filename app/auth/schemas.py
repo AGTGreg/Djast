@@ -47,6 +47,19 @@ class SetPassword(BaseModel):
     new_password: str = Field(max_length=100)
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(max_length=512)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(max_length=512)
+    new_password: str = Field(max_length=100)
+
+
 # Response Schemas
 class BaseResponse(BaseModel):
     message: str

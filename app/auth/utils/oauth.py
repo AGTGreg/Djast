@@ -15,7 +15,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from djast.settings import settings
-from auth.models import User, OAuthAccount
+from auth.models import User, OAuthAccount, EmailAddress
 from auth.utils.auth_backend import redis_client
 from auth import exceptions as auth_exceptions
 
@@ -338,6 +338,16 @@ async def get_or_create_oauth_user(
             provider_user_id=provider_user_id,
             provider_email=email,
         )
+        # Mark email as verified (OAuth provider already verified it)
+        email_addr = await EmailAddress.objects(session).get(
+            user_id=user.id, email=email,
+        )
+        if email_addr and not email_addr.verified:
+            await email_addr.update(session, verified=True)
+        elif not email_addr:
+            await EmailAddress.objects(session).create(
+                user_id=user.id, email=email, verified=True, primary=True,
+            )
         return user
 
     # 3. Create new user with unusable password
@@ -348,6 +358,11 @@ async def get_or_create_oauth_user(
         provider_user_id=provider_user_id,
         provider_email=email,
     )
+    # Create verified EmailAddress (OAuth provider already verified it)
+    if email:
+        await EmailAddress.objects(session).create(
+            user_id=user.id, email=email, verified=True, primary=True,
+        )
     return user
 
 

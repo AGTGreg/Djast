@@ -108,6 +108,21 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "csrf_token"
     CSRF_HEADER_NAME: str = "X-CSRF-Token"
     CSRF_TOKEN_LENGTH: int = 32
+    # Email Verification: "mandatory" | "optional" | "none"
+    # "mandatory" — user cannot log in until primary email is verified
+    # "optional" — verification email sent but login allowed without it
+    # "none" — no verification emails sent
+    EMAIL_VERIFICATION: str = "none"
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_SECONDS: int = 86400   # 24 hours
+    PASSWORD_RESET_TOKEN_EXPIRE_SECONDS: int = 3600         # 1 hour
+
+    # Cooldown between resending verification/reset emails (seconds)
+    EMAIL_COOLDOWN_SECONDS: int = 300  # 5 minutes
+
+    # Frontend URLs for email verification and password reset
+    # Token is appended as ?token=...
+    EMAIL_VERIFICATION_URL: str = "http://localhost:3000/auth/verify-email"
+    PASSWORD_RESET_URL: str = "http://localhost:3000/auth/reset-password"
     # /Auth & Security settings ===============================================
 
     # Email =================================================================
@@ -119,7 +134,7 @@ class Settings(BaseSettings):
     EMAIL_HOST_USER: str = ""
     EMAIL_HOST_PASSWORD: str = ""
     DEFAULT_FROM_EMAIL: str = ""
-    EMAIL_TEMPLATE_DIR: str = ""
+    EMAIL_TEMPLATE_DIR: str = str(ROOT_DIR / "templates" / "email")
     # /Email ================================================================
 
     # Task Queue ==============================================================
@@ -140,6 +155,10 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_REVOKE: str = "20/minute"
     AUTH_RATE_LIMIT_USER_ME: str = "100/minute"
     AUTH_RATE_LIMIT_OAUTH: str = "10/minute"
+    AUTH_RATE_LIMIT_VERIFY_EMAIL: str = "5/minute"
+    AUTH_RATE_LIMIT_RESEND_VERIFICATION: str = "3/minute"
+    AUTH_RATE_LIMIT_PASSWORD_RESET_REQUEST: str = "3/minute"
+    AUTH_RATE_LIMIT_PASSWORD_RESET_CONFIRM: str = "5/minute"
 
     def model_post_init(self, __context) -> None:
         # If the user didn't explicitly configure origins, provide safe defaults.

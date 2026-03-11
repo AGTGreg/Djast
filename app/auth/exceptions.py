@@ -41,6 +41,16 @@ class AccountLockedOut(Exception):
     pass
 
 
+class EmailNotVerified(Exception):
+    """Raised when login is blocked due to unverified email under mandatory verification."""
+    pass
+
+
+class EmailCooldown(Exception):
+    """Raised when an email was sent too recently (within cooldown period)."""
+    pass
+
+
 class OAuthProviderDisabled(Exception):
     """Raised when an OAuth provider is not enabled in settings."""
     pass

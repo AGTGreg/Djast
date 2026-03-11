@@ -224,6 +224,29 @@ else:
         pass
 
 
+class EmailAddress(models.Model):
+    """Tracks email addresses and their verification status.
+
+    Follows the django-allauth EmailAddress pattern. Each user can have
+    one primary email. Verification status is tracked independently of
+    the User model to keep AbstractDjangoUser Django-compatible.
+    """
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("auth_user.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    verified: Mapped[bool] = mapped_column(default=False)
+    primary: Mapped[bool] = mapped_column(default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=dj_timezone.now,
+        server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<EmailAddress(email={self.email}, verified={self.verified})>"
+
+
 class OAuthAccount(models.Model):
     """Links a social provider identity to a User.
 

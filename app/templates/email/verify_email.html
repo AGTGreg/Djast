@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden;">
+        <tr>
+            <td style="padding: 40px 30px;">
+                <h1 style="margin: 0 0 20px; font-size: 24px; color: #333333;">Verify Your Email Address</h1>
+                <p style="margin: 0 0 20px; font-size: 16px; line-height: 1.5; color: #555555;">
+                    Welcome to {{ project_name }}! Please verify your email address by clicking the button below.
+                </p>
+                <table role="presentation" cellspacing="0" cellpadding="0" style="margin: 30px 0;">
+                    <tr>
+                        <td style="border-radius: 6px; background-color: #2563eb;">
+                            <a href="{{ verification_url }}" target="_blank" style="display: inline-block; padding: 14px 30px; font-size: 16px; color: #ffffff; text-decoration: none; font-weight: 600;">
+                                Verify Email
+                            </a>
+                        </td>
+                    </tr>
+                </table>
+                <p style="margin: 0 0 10px; font-size: 14px; line-height: 1.5; color: #888888;">
+                    This link will expire in {{ expiry_hours }} hours.
+                </p>
+                <p style="margin: 0 0 10px; font-size: 14px; line-height: 1.5; color: #888888;">
+                    If you didn't create an account, you can safely ignore this email.
+                </p>
+                <hr style="border: none; border-top: 1px solid #eeeeee; margin: 30px 0;">
+                <p style="margin: 0; font-size: 12px; color: #aaaaaa;">
+                    If the button doesn't work, copy and paste this link into your browser:<br>
+                    <a href="{{ verification_url }}" style="color: #2563eb; word-break: break-all;">{{ verification_url }}</a>
+                </p>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
