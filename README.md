@@ -3,7 +3,7 @@
 
 ## 🚀 Overview
 
-**Djast** is a FastAPI + SQLAlchemy boilerplate designed to bridge the gap between Django and FastAPI. It brings the familiar developer experience of Django: structured apps, a `manage.py` CLI, and centralized configuration to the high-performance, asynchronous world of FastAPI.
+**Djast** is a Web framework based on FastAPI designed to bridge the gap between Django and FastAPI. It brings the familiar developer experience of Django: structured apps, a `manage.py` CLI, and centralized configuration to the high-performance, asynchronous world of FastAPI.
 
 ### The Philosophy:
 Djast does **not** abstract FastAPI and SQLAlchemy or make them heavier or more complex. It doesn't hide the underlying logic behind thick abstraction layers. It is designed for people who want to use a well established and battle testsed stack (FastAPI and SQLAlchemy) **sprinkled with a little bit of "Django magic"**.
@@ -53,7 +53,7 @@ Configuration is managed in `djast/settings.py` using Pydantic's `BaseSettings`.
 
 ## 🗄️ Database Models
 
-Djast provides a robust base for your SQLAlchemy models, designed to reduce boilerplate and provide a familiar API.
+Djast provides a robust base for your SQLAlchemy models, designed to provide a familiar API.
 
 ```python
 from sqlalchemy import String

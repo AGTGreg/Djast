@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     EMAIL_TEMPLATE_DIR: str = ""
     # /Email ================================================================
 
+    # Task Queue ==============================================================
+    TASKIQ_BROKER_URL: str = "redis://redis:6379/3"
+    TASKIQ_RESULT_BACKEND_URL: str = "redis://redis:6379/4"
+    TASKIQ_RESULT_EX_TIME: int = 3600          # result expiry (seconds)
+    TASKIQ_RETRY_MAX_ATTEMPTS: int = 3
+    TASKIQ_RETRY_DELAY: float = 5.0            # base delay between retries (seconds)
+    TASKIQ_RETRY_MAX_DELAY: float = 120.0      # max delay cap (seconds)
+    EMAIL_USE_TASKIQ: bool = False              # route emails through task queue
+    # /Task Queue =============================================================
+
     # Auth Rate Limits
     AUTH_RATE_LIMIT_SIGNUP: str = "5/minute"
     AUTH_RATE_LIMIT_LOGIN: str = "5/minute"

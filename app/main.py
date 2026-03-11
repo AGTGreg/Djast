@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,12 +8,24 @@ from djast.urls import api_router
 from djast.utils.csrf import csrf_protect
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from djast.taskiq import broker
+
+    if not broker.is_worker_process:
+        await broker.startup()
+    yield
+    if not broker.is_worker_process:
+        await broker.shutdown()
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         debug=settings.DEBUG,
         dependencies=[Depends(csrf_protect)],
+        lifespan=lifespan,
     )
 
     from djast.rate_limit import limiter

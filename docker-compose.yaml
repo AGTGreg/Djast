@@ -26,6 +26,30 @@ services:
       - dev.env
     command: [ "fastapi", "dev", "main.py", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
 
+  taskiq-worker:
+    build:
+      context: ./app
+    depends_on:
+      - redis
+    volumes:
+      - ./app:/app
+      - app_volume:/vol/app
+    env_file:
+      - dev.env
+    command: ["taskiq", "worker", "djast.taskiq:broker", "djast.tasks"]
+
+  taskiq-scheduler:
+    build:
+      context: ./app
+    depends_on:
+      - redis
+    volumes:
+      - ./app:/app
+      - app_volume:/vol/app
+    env_file:
+      - dev.env
+    command: ["taskiq", "scheduler", "djast.scheduler:scheduler"]
+
 volumes:
   app_volume:
   redis_data:

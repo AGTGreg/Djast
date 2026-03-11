@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Djast is a FastAPI + SQLAlchemy boilerplate that provides Django-like developer experience with FastAPI's async performance. Python 3.12, SQLAlchemy 2.0 async ORM, Pydantic 2.0 settings, Alembic migrations.
+Djast is a FastAPI + SQLAlchemy framework that provides Django-like developer experience with FastAPI's async performance. Python 3.12, SQLAlchemy 2.0 async ORM, Pydantic 2.0 settings, Alembic migrations.
 
 ## Commands
 
@@ -25,7 +25,11 @@ pytest                                 # All tests
 pytest auth/tests/test_views.py -v     # Single test file
 pytest auth/tests/ -v                  # All tests in a module
 
-# Docker
+# TaskIQ (task queue)
+taskiq worker djast.taskiq:broker djast.tasks <app>.tasks --reload   # Start worker
+taskiq scheduler djast.scheduler:scheduler --reload                  # Start cron scheduler
+
+# Docker (includes app, redis, taskiq worker, taskiq scheduler)
 docker compose up --build
 ```
 
@@ -41,9 +45,15 @@ Djast/
 │   │   ├── urls.py             # Central router — all app routers registered here
 │   │   ├── database.py         # Async session factory & dependency
 │   │   ├── rate_limit.py       # SlowAPI + Redis rate limiter
+│   │   ├── taskiq.py           # Taskiq broker configuration
+│   │   ├── scheduler.py        # Taskiq cron scheduler
+│   │   ├── tasks.py            # Framework-level async tasks (e.g., send_email task)
 │   │   ├── db/                 # ORM layer (Base, Model, Manager, engine)
 │   │   ├── commands/           # CLI commands (startapp, makemigrations, migrate, shell)
 │   │   ├── utils/              # Framework-wide utilities
+│   │   │   ├── email.py        # Email API (send_email, send_template_email, EmailMessage)
+│   │   │   ├── email_backends/ # Pluggable backends (console, SMTP)
+│   │   │   └── tasks.py        # run_in_executor for CPU-bound work in async tasks
 │   │   └── templates/          # Code generation templates for startapp
 │   ├── auth/                   # Auth module (built-in app)
 │   │   ├── models.py
@@ -65,6 +75,9 @@ Djast/
 - **Manager as the query interface**: `Model.objects(session)` provides a Django-like API for common queries. The Manager flushes but does not commit — that's the session dependency's job. This keeps query logic decoupled from transaction boundaries.
 - **Pluggable database engine**: `build_engine()` reads from `settings.DATABASES` and constructs the right async engine (SQLite for dev, PostgreSQL for production). Switching databases requires only environment variable changes.
 - **Dynamic CLI**: `manage.py` discovers commands from `djast/commands/` at runtime via `pkgutil`. Each command module exposes a `run()` function. Adding a new command means dropping a new file in that directory.
+- **Pluggable email backend**: Django-inspired pattern — swap email delivery by changing `EMAIL_BACKEND` setting. Custom backends subclass `BaseEmailBackend` and implement `send_message()`. Optional TaskIQ integration for async dispatch.
+- **Async task queue (TaskIQ)**: Redis-backed broker with retry middleware. Tasks defined per-app in `tasks.py`. Cron scheduling via decorator. Worker and scheduler run as separate Docker services. Tests use `InMemoryBroker` — no Redis needed.
+- **Optional OAuth**: Social login (Google, GitHub) disabled by default. Enabled per-provider via settings. Authorization code exchange pattern keeps tokens server-side. `OAuthAccount` model links multiple providers to one user.
 
 ## Architecture
 
@@ -76,15 +89,22 @@ Djast/
 - **rate_limit.py** — SlowAPI rate limiter with Redis storage.
 - **db/models.py** — ORM base classes: `Base` (auto-tablename, AsyncAttrs), `Model` (adds int PK, Manager, instance save/update/delete), `TimestampMixin`, `Manager` (Django-style async query API).
 - **db/engine.py** — `build_engine()` factory supporting SQLite and PostgreSQL.
+- **taskiq.py** — Taskiq broker setup with Redis backend, `SmartRetryMiddleware` (exponential backoff + jitter), and `ListQueueBroker`. Import broker from here for task definitions.
+- **scheduler.py** — `TaskiqScheduler` for cron-based task scheduling. Runs as a separate process.
+- **tasks.py** — Framework-level tasks (e.g., `send_email_task`). App-specific tasks go in `<app>/tasks.py`.
+- **utils/email.py** — Async email API: `send_email()`, `send_template_email()`, `EmailMessage`, `BaseEmailBackend`, `get_email_backend()`. Pluggable backends via `EMAIL_BACKEND` setting. Jinja2 template rendering for HTML emails. Optionally routes through TaskIQ when `EMAIL_USE_TASKIQ=True`.
+- **utils/email_backends/** — `ConsoleEmailBackend` (dev default, prints to stdout), `SMTPEmailBackend` (production, wraps fastapi-mail). Custom backends subclass `BaseEmailBackend`.
+- **utils/tasks.py** — `run_in_executor()` for running CPU-bound sync code inside async tasks.
 - **commands/** — Custom CLI commands loaded dynamically by `manage.py`.
-- **templates/module/** — Template files used by `startapp` to scaffold new apps.
+- **templates/module/** — Template files used by `startapp` to scaffold new apps (includes `tasks.py` template).
 
 ### Auth Module (`app/auth/`)
 
-- **models.py** — User model hierarchy: `AbstractBaseUser` → `AbstractDjangoUser`/`AbstractEmailUser` → `User`. `RefreshToken` model with rotation and blacklisting. `AUTH_USER_MODEL_TYPE` setting switches between username ("django") and email-based auth.
-- **views.py** — Auth endpoints: signup, login, token refresh (with rotation + replay detection), logout, change password, user info.
+- **models.py** — User model hierarchy: `AbstractBaseUser` → `AbstractDjangoUser`/`AbstractEmailUser` → `User`. `RefreshToken` model with rotation and blacklisting. `OAuthAccount` model linking social identities to users. `AUTH_USER_MODEL_TYPE` setting switches between username ("django") and email-based auth.
+- **views.py** — Auth endpoints: signup, login, token refresh (with rotation + replay detection), logout, change password, user info. OAuth endpoints: `GET /auth/oauth/{provider}/authorize`, `GET /auth/oauth/{provider}/callback`, `POST /auth/oauth/token`, `DELETE /auth/oauth/{provider}/link`, `POST /auth/set-password`.
 - **utils/auth_backend.py** — JWT generation, user creation, authentication logic.
 - **utils/hashers.py** — Django-compatible async pbkdf2_sha256 password hashing.
+- **utils/oauth.py** — OAuth2 social login (Google, GitHub). Uses Authlib for OIDC. Redis-backed state tokens for CSRF. Authorization code exchange pattern (tokens stored behind one-time code, not exposed in redirect URL). Toggled via `OAUTH_GOOGLE_ENABLED` / `OAUTH_GITHUB_ENABLED` (disabled by default).
 
 ### Key Patterns
 
@@ -92,10 +112,13 @@ Djast/
 - **App factory**: `create_app()` in `main.py` sets up middleware (CORS, rate limiting) and mounts the router with `APP_PREFIX`.
 - **Auto-tablename**: Table names derived from module + class name in snake_case (e.g., `auth_user`).
 - **New apps**: Created via `python manage.py startapp <name>`, then register the router in `djast/urls.py`.
+- **Task queue**: Define tasks in `<app>/tasks.py` using `@broker.task` decorator (import broker from `djast.taskiq`). Enqueue with `.kiq()`. Cron schedules via `schedule=[{"cron": "..."}]` on the decorator. Tests use `InMemoryBroker` via `_reset_broker()`.
+- **Email sending**: Use `send_email()` / `send_template_email()` from `djast.utils.email`. Backends are swappable via `EMAIL_BACKEND` setting. When `EMAIL_USE_TASKIQ=True`, emails are dispatched async via task queue (attachments not supported in this mode).
+- **CSRF protection**: Double-submit cookie pattern on all state-changing authenticated endpoints. Login/refresh set `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header.
 
 ## Coding Guidelines
 
-This is a boilerplate — all code must be async, performant, secure, easy for developers to use, and clean.
+This is a framework — all code must be async, performant, secure, easy for developers to use, and clean.
 
 ### DRY (Don't Repeat Yourself)
 
@@ -139,7 +162,7 @@ This is a boilerplate — all code must be async, performant, secure, easy for d
 - Name variables and functions descriptively — avoid single-letter names outside of comprehensions.
 - Keep functions focused on a single responsibility. If a function does multiple unrelated things, split it.
 - Write code for the next developer: favour readability over cleverness. If a pattern needs explanation, add a brief comment on *why*, not *what*.
-- When adding new features, follow the existing module structure (`models.py`, `views.py`, `schemas.py`, `utils/`). Consistency across apps makes the boilerplate easy to learn.
+- When adding new features, follow the existing module structure (`models.py`, `views.py`, `schemas.py`, `utils/`). Consistency across apps makes the framework easy to learn.
 
 ## Development Workflow
 
@@ -173,9 +196,10 @@ This is a boilerplate — all code must be async, performant, secure, easy for d
 - pytest + pytest-asyncio with in-memory SQLite for isolation.
 - Tests live in `<app>/tests/` directories (e.g., `auth/tests/`).
 - Auth tests use `httpx.AsyncClient` for endpoint testing and `async_sessionmaker` fixtures.
+- TaskIQ tests use `InMemoryBroker` via `_reset_broker()` fixture — no Redis required. Call task functions directly (not `.kiq()`) for unit tests; mock `.kiq()` to test view integration.
 - Every new endpoint needs at least: a success case, an auth/permission failure case, and an invalid input case.
 - Every new utility or model method needs unit tests covering expected behaviour and edge cases.
 
 ## Dependencies
 
-Defined in `app/requirements.txt` (no pyproject.toml). Key: FastAPI, SQLAlchemy[asyncio], Pydantic-settings, Alembic, PyJWT, SlowAPI, Redis, aiosqlite.
+Defined in `app/requirements.txt` (no pyproject.toml). Key: FastAPI, SQLAlchemy[asyncio], Pydantic-settings, Alembic, PyJWT, SlowAPI, Redis, aiosqlite, Authlib (OAuth), fastapi-mail (SMTP email), Taskiq + taskiq-redis + taskiq-aiohttp (task queue), Jinja2 (email templates).

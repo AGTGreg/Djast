@@ -140,6 +140,11 @@ def render_email_template(template_name: str, context: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _is_console_backend() -> bool:
+    """Return ``True`` if the configured email backend is the console backend."""
+    return "console" in settings.EMAIL_BACKEND.lower()
+
+
 async def send_email(
     subject: str,
     body: str,
@@ -152,7 +157,37 @@ async def send_email(
     reply_to: list[str] | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> bool:
-    """Send a single email using the configured backend."""
+    """Send a single email using the configured backend.
+
+    When ``settings.EMAIL_USE_TASKIQ`` is ``True`` and the active backend is
+    not the console backend, the email is dispatched via Taskiq as a background
+    task.  Emails with attachments are **not supported** through Taskiq — a
+    ``ValueError`` is raised if attachments are provided while the setting is
+    enabled.
+    """
+    # Taskiq path: dispatch to task queue (non-console backends only)
+    if settings.EMAIL_USE_TASKIQ and not _is_console_backend():
+        if attachments:
+            raise ValueError(
+                "Email attachments are not supported when EMAIL_USE_TASKIQ "
+                "is enabled. Either send without attachments or set "
+                "EMAIL_USE_TASKIQ=False."
+            )
+        from djast.tasks import send_email_task
+
+        await send_email_task.kiq(
+            subject=subject,
+            to=to,
+            body=body,
+            html_body=html_body,
+            from_email=from_email,
+            cc=cc,
+            bcc=bcc,
+            reply_to=reply_to,
+        )
+        return True
+
+    # Direct path: inline send
     message = EmailMessage(
         subject=subject,
         to=to,

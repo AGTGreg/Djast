@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - `CORS_ALLOW_CREDENTIALS` now defaults to `True` in DEBUG, `False` in production (was always `True`).
 
 ### Added
+- **Task queue (Taskiq)**: Async-native task queue backed by Redis. Includes `ListQueueBroker` with result backend, `SmartRetryMiddleware` (exponential backoff + jitter), built-in cron scheduling via `TaskiqScheduler`, and `run_in_executor` utility for CPU-bound work. Email sending can be routed through the task queue via `EMAIL_USE_TASKIQ` setting (attachments not supported through Taskiq — raises `ValueError`; console backend always sends directly). Worker and scheduler services added to `docker-compose.yaml`. New `tasks.py` included in `startapp` scaffold template. See `docs/taskiq.md`.
 - **Email backend**: Django-like pluggable email backend with async support. Ships with `ConsoleEmailBackend` (prints to stdout, default for dev) and `SMTPEmailBackend` (wraps fastapi-mail for production SMTP). Swappable via `EMAIL_BACKEND` dotted path in settings. Includes Jinja2 template rendering for HTML emails, file attachments, and convenience functions `send_email()` / `send_template_email()`. 22 new tests.
 - **OAuth2 social login**: Optional Google and GitHub sign-up/sign-in flows, toggled via `OAUTH_GOOGLE_ENABLED` / `OAUTH_GITHUB_ENABLED` settings (disabled by default).
   - New endpoints: `GET /auth/oauth/{provider}/authorize`, `GET /auth/oauth/{provider}/callback`, `POST /auth/oauth/token`, `DELETE /auth/oauth/{provider}/link`, `POST /auth/set-password`.

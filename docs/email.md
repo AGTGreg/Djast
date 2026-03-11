@@ -28,6 +28,7 @@ Add these to your environment (or `dev.env`):
 | `EMAIL_HOST_PASSWORD` | `""` | SMTP login password |
 | `DEFAULT_FROM_EMAIL` | `""` | Default sender address |
 | `EMAIL_TEMPLATE_DIR` | `""` | Path to Jinja2 email templates directory |
+| `EMAIL_USE_TASKIQ` | `False` | Route emails through the TaskIQ task queue (requires [TaskIQ setup](taskiq.md)). Attachments are not supported when enabled. |
 
 **Production SMTP example** (`dev.env`):
 
@@ -40,6 +41,7 @@ EMAIL_HOST_USER=noreply@example.com
 EMAIL_HOST_PASSWORD=your-password
 DEFAULT_FROM_EMAIL=noreply@example.com
 EMAIL_TEMPLATE_DIR=templates/email
+EMAIL_USE_TASKIQ=True          # optional — send emails via task queue (requires TaskIQ)
 ```
 
 ---
