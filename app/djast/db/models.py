@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 
 from typing import Any, Optional, TypeVar, Generic, TYPE_CHECKING, Sequence
+from datetime import datetime
 
 from pydantic import create_model
 from pydantic import BaseModel, ConfigDict
@@ -42,9 +43,7 @@ class Manager(Generic[T]):
 
     def _get_session(self) -> AsyncSession:
         if self._session is None:
-            raise RuntimeError(
-                "No session bound. Use Model.objects.with_session(session) first."
-            )
+            raise RuntimeError("No session bound.")
         return self._session
 
     # -------------------------------------------------------------------------
@@ -164,15 +163,17 @@ class Manager(Generic[T]):
         retrying the lookup if another transaction created the row first.
 
         Args:
-            defaults: A dictionary of attributes to set on creation if not found.
+            defaults: A dictionary of attributes to set on creation if not
+            found.
             **kwargs: Attributes to filter the lookup.
 
         Returns:
-            A tuple of (instance, created), where 'created' is a boolean indicating
-            whether a new instance was created (True) or an existing one was found (False).
+            A tuple of (instance, created), where 'created' is a boolean
+            indicating whether a new instance was created (True) or an existing
+            one was found (False).
 
         Usage:
-            user, created = await User.objects.with_session(session).get_or_create(
+            user, created = await User.objects(session).get_or_create(
                 email="test@example.com",
                 defaults={"name": "Test User"}
             )
@@ -186,7 +187,8 @@ class Manager(Generic[T]):
             instance = await self.create(**create_kwargs)
             return instance, True
         except IntegrityError:
-            # Another transaction created the row; rollback partial state and re-fetch
+            # Another transaction created the row; rollback partial state and
+            # re-fetch
             session = self._get_session()
             await session.rollback()
             instance = await self.get(**kwargs)
@@ -199,25 +201,27 @@ class Manager(Generic[T]):
         self, defaults: dict[str, Any] | None = None, **kwargs: Any
     ) -> tuple[T, bool]:
         """
-        Look up an object with the given kwargs, updating one with defaults if it exists,
-        otherwise create a new one.
+        Look up an object with the given kwargs, updating one with defaults if
+        it exists, otherwise create a new one.
         Returns a tuple of (instance, created), where created is True if a new
         object was created.
 
         This method handles race conditions by catching IntegrityError and
-        retrying the lookup/update if another transaction created the row first.
+        retrying the lookup/update if another transaction created the row
+        first.
 
         Args:
-            defaults: A dictionary of attributes to update on the instance if found,
-                      or to set on creation if not found.
+            defaults: A dictionary of attributes to update on the instance if
+            found, or to set on creation if not found.
             **kwargs: Attributes to filter the lookup.
 
         Returns:
-            A tuple of (instance, created), where 'created' is a boolean indicating
-            whether a new instance was created (True) or an existing one was updated (False).
+            A tuple of (instance, created), where 'created' is a boolean
+            indicating whether a new instance was created (True) or an existing
+            one was updated (False).
 
         Usage:
-            user, created = await User.objects.with_session(session).update_or_create(
+            user, created = await User.objects(session).update_or_create(
                 email="test@example.com",
                 defaults={"name": "Updated Name"}
             )
@@ -225,7 +229,7 @@ class Manager(Generic[T]):
         defaults = defaults or {}
         instance = await self.get(**kwargs)
         if instance is not None:
-            instance = await self.update(instance, **defaults)
+            await instance.update(self._get_session(), **defaults)
             return instance, False
 
         create_kwargs = {**kwargs, **defaults}
@@ -233,25 +237,30 @@ class Manager(Generic[T]):
             instance = await self.create(**create_kwargs)
             return instance, True
         except IntegrityError:
-            # Another transaction created the row; rollback partial state and update
+            # Another transaction created the row; rollback partial state and
+            # update
             session = self._get_session()
             await session.rollback()
             instance = await self.get(**kwargs)
             if instance is not None:
-                instance = await self.update(instance, **defaults)
+                await instance.update(self._get_session(), **defaults)
                 return instance, False
             # If still not found, re-raise - something else went wrong
             raise
 
-    async def bulk_create(self, objects: list[T], refresh: bool = False) -> list[T]:
+    async def bulk_create(
+        self,
+        objects: list[T],
+        refresh: bool = False
+    ) -> list[T]:
         """
         Insert multiple instances.
 
         Args:
             objects: A list of instances to be inserted.
             refresh: If True, refresh each instance after insertion to get
-            updated state from the database. This is False by default because it
-            is highly inefficient for large batches.
+            updated state from the database. This is False by default because
+            it is highly inefficient for large batches.
 
         Returns:
             The list of inserted instances.
@@ -263,36 +272,6 @@ class Manager(Generic[T]):
             for obj in objects:
                 await session.refresh(obj)
         return objects
-
-    async def update(self, instance: T, **kwargs: Any) -> T:
-        """
-        Update attributes on an existing instance.
-
-        Args:
-            instance: The instance to be updated.
-            **kwargs: Attributes to update on the instance.
-
-        Returns:
-            The updated instance.
-        """
-        session = self._get_session()
-        for key, value in kwargs.items():
-            setattr(instance, key, value)
-        session.add(instance)
-        await session.flush()
-        await session.refresh(instance)
-        return instance
-
-    async def delete(self, instance: T) -> None:
-        """
-        Delete a single instance.
-
-        Args:
-            instance: The instance to be deleted.
-        """
-        session = self._get_session()
-        await session.delete(instance)
-        await session.flush()
 
     async def delete_all(self, **kwargs: Any) -> int:
         """
@@ -365,10 +344,35 @@ class Model(Base):
     3. Django-style async Manager via `objects` attribute
     4. AsyncAttrs for awaitable attributes
     5. Pydantic schema generation via `get_schema` method
+    6. Instance methods for save, update, and delete
     """
     __abstract__ = True
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    async def save(self, session: AsyncSession) -> None:
+        """
+        Save the current instance to the database.
+        Equivalent to Django's save(), but requires an explicit session.
+        """
+        session.add(self)
+        await session.flush()
+        await session.refresh(self)
+
+    async def update(self, session: AsyncSession, **kwargs: Any) -> None:
+        """
+        Update attributes on this instance and save it.
+        """
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        await self.save(session)
+
+    async def delete(self, session: AsyncSession) -> None:
+        """
+        Delete this instance from the database.
+        """
+        await session.delete(self)
+        await session.flush()
 
     @classmethod
     def objects(cls, session) -> "Manager[Any]":
@@ -386,9 +390,9 @@ class Model(Base):
     @classmethod
     def get_schema(cls, exclude: set[str] | None = None) -> type[BaseModel]:
         """
-        Auto-generate a valid Pydantic BaseModel schema from the model's fields,
-        excluding the `exclude` fields. The schema can be used for serialization
-        and validation in FastAPI.
+        Auto-generate a valid Pydantic BaseModel schema from the model's
+        fields, excluding the `exclude` fields. The schema can be used for
+        serialization and validation in FastAPI.
 
         Args:
             exclude: An optional set of field names to exclude from the schema.

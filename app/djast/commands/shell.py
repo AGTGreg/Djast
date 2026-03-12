@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Django-like interactive shell for FastAPI Boilerplate.
+Django-like interactive shell for Djast.
 
 Provides an interactive Python shell with pre-loaded models, database session,
 and settings. Supports async operations via IPython's %autoawait.

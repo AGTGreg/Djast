@@ -3,7 +3,7 @@
 
 ## 🚀 Overview
 
-**Djast** is a FastAPI + SQLAlchemy boilerplate designed to bridge the gap between Django and FastAPI. It brings the familiar developer experience of Django: structured apps, a `manage.py` CLI, and centralized configuration to the high-performance, asynchronous world of FastAPI.
+**Djast** is a Web framework based on FastAPI designed to bridge the gap between Django and FastAPI. It brings the familiar developer experience of Django: structured apps, a `manage.py` CLI, and centralized configuration to the high-performance, asynchronous world of FastAPI.
 
 ### The Philosophy:
 Djast does **not** abstract FastAPI and SQLAlchemy or make them heavier or more complex. It doesn't hide the underlying logic behind thick abstraction layers. It is designed for people who want to use a well established and battle testsed stack (FastAPI and SQLAlchemy) **sprinkled with a little bit of "Django magic"**.
@@ -19,8 +19,13 @@ Whether you are a Django developer looking for speed, or a FastAPI developer loo
   - `python manage.py shell`: Interactive shell with app context and session pre-loaded.
 - **Familiar Structure**: Organized like a Django project with `djast/settings.py`, `djast/urls.py`, and modular apps.
 - **Pure Performance**: Maintains the raw speed of FastAPI and async SQLAlchemy without overhead.
-- **Database Ready**: Async SQLAlchemy setup (SQLIte, Postgres) with Alembic for migrations included out of the box.
-- **Dockerized**: Includes `Dockerfile` and `docker-compose.yaml` for easy deployment.
+- **Database Ready**: Async SQLAlchemy setup (SQLite, Postgres) with Alembic for migrations included out of the box.
+- **[Auth](docs/auth.md)**: JWT access/refresh tokens, signup, login, email verification, forgot-password, CSRF protection, brute force lockout.
+- **[OAuth2](docs/auth.md)**: Optional Google & GitHub social login — disabled by default, toggled via settings.
+- **[Email](docs/email.md)**: Pluggable async email backend (console for dev, SMTP for production) with Jinja2 templates.
+- **[TaskIQ](docs/taskiq.md)**: Redis-backed async task queue with retries, cron scheduling, and optional email dispatch.
+- **[Security](docs/security.md)**: CSRF double-submit cookies, rate limiting, Redis token blacklisting, brute force protection.
+- **Dockerized**: Includes `Dockerfile` and `docker-compose.yaml` with app, Redis, TaskIQ worker, and scheduler.
 
 
 ## 🛠️ Quick Start
@@ -53,7 +58,7 @@ Configuration is managed in `djast/settings.py` using Pydantic's `BaseSettings`.
 
 ## 🗄️ Database Models
 
-Djast provides a robust base for your SQLAlchemy models, designed to reduce boilerplate and provide a familiar API.
+Djast provides a robust base for your SQLAlchemy models, designed to provide a familiar API.
 
 ```python
 from sqlalchemy import String
@@ -167,8 +172,9 @@ await session.commit()
 
 Planned features for future releases:
 
-- [ ] **Better Test Coverage** - Comprehensive test suite for all core components and utilities
-- [ ] **Better documentation** - Cover all modules and utilites.
-- [ ] **Auth App** - Pre-built authentication module with JWT tokens, user registration, login, and password management
+- [x] **Auth App** - JWT auth, signup, login, email verification, password reset, OAuth2
+- [x] **Email Backend** - Pluggable async email with console and SMTP backends
+- [x] **Task Queue (TaskIQ)** - Async task queue with Redis, retries, and cron scheduling
+- [ ] **Better documentation** - Cover all modules and utilities.
 - [ ] **Basic Admin** - Simple admin interface for managing database records (inspired by Django Admin)
-- [ ] **Cookiecutter Templates** - Project and micro-service initialization templates with cookiecutter for quick scaffolding
+- [ ] **Cookiecutter (or similar) Templates** - Project and micro-service initialization templates with cookiecutter for quick scaffolding

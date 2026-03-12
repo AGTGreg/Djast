@@ -366,8 +366,8 @@ class TestManagerCountAndExists:
 # Tests: Update Operations
 # -----------------------------------------------------------------------------
 
-class TestManagerUpdate:
-    """Tests for Manager.update() method."""
+class TestModelUpdate:
+    """Tests for Model.update() method."""
 
     @pytest.mark.asyncio
     async def test_update_single_field(self, populated_session):
@@ -375,10 +375,10 @@ class TestManagerUpdate:
         manager = SampleUser.objects(populated_session)
         user = await manager.get(email="alice@example.com")
 
-        updated_user = await manager.update(user, name="Alice Updated")
+        await user.update(populated_session, name="Alice Updated")
 
-        assert updated_user.name == "Alice Updated"
-        assert updated_user.email == "alice@example.com"  # Unchanged
+        assert user.name == "Alice Updated"
+        assert user.email == "alice@example.com"  # Unchanged
 
     @pytest.mark.asyncio
     async def test_update_multiple_fields(self, populated_session):
@@ -386,22 +386,23 @@ class TestManagerUpdate:
         manager = SampleUser.objects(populated_session)
         user = await manager.get(email="bob@example.com")
 
-        updated_user = await manager.update(user, name="Bob Updated", age=99, is_active=False)
+        await user.update(populated_session, name="Bob Updated", age=99, is_active=False)
 
-        assert updated_user.name == "Bob Updated"
-        assert updated_user.age == 99
-        assert updated_user.is_active is False
+        assert user.name == "Bob Updated"
+        assert user.age == 99
+        assert user.is_active is False
 
     @pytest.mark.asyncio
-    async def test_update_returns_same_instance(self, populated_session):
-        """Test that update returns the same refreshed instance."""
+    async def test_update_in_place(self, populated_session):
+        """Test that update modifies the instance in place."""
         manager = SampleUser.objects(populated_session)
         user = await manager.get(email="alice@example.com")
         original_id = user.id
 
-        updated_user = await manager.update(user, name="New Name")
+        await user.update(populated_session, name="New Name")
 
-        assert updated_user.id == original_id
+        assert user.id == original_id
+        assert user.name == "New Name"
 
 
 # -----------------------------------------------------------------------------
@@ -417,7 +418,7 @@ class TestManagerDelete:
         manager = SampleUser.objects(populated_session)
         user = await manager.get(email="alice@example.com")
 
-        await manager.delete(user)
+        await user.delete(populated_session)
 
         # Verify deletion
         deleted_user = await manager.get(email="alice@example.com")
@@ -756,12 +757,12 @@ class TestManagerIntegration:
         assert fetched.name == "CRUD User"
 
         # Update
-        updated = await manager.update(fetched, name="Updated CRUD User", age=31)
-        assert updated.name == "Updated CRUD User"
-        assert updated.age == 31
+        await fetched.update(manager._get_session(), name="Updated CRUD User", age=31)
+        assert fetched.name == "Updated CRUD User"
+        assert fetched.age == 31
 
         # Delete
-        await manager.delete(updated)
+        await fetched.delete(manager._get_session())
         deleted = await manager.get(id=user_id)
         assert deleted is None
 

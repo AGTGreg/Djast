@@ -1,0 +1,75 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [Unreleased]
+
+### Security
+- **CSRF protection**: Double-submit cookie pattern for all state-changing authenticated endpoints. Login/refresh set a `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header. Configurable via `CSRF_ENABLED`, `CSRF_COOKIE_NAME`, `CSRF_HEADER_NAME`, `CSRF_TOKEN_LENGTH`.
+- **OAuth authorization code exchange**: OAuth callback no longer exposes tokens in redirect URL. Tokens are stored behind a one-time authorization code (Redis, configurable TTL via `OAUTH_CODE_TTL`). Frontend exchanges the code via `POST /auth/oauth/token`.
+- **Credentials exception factory**: Replace shared mutable `CREDENTIALS_EXCEPTION` singleton with `credentials_exception()` factory to prevent cross-request state leakage.
+- **Token blacklist clock-skew buffer**: Blacklist TTL now includes a 10-second buffer to account for clock skew between servers.
+- **Timing leak fix**: Consolidated `authenticate()` return paths so inactive users and wrong passwords take the same code path (no `last_login` DB write difference).
+- **OAuth callback input validation**: `code` and `state` query parameters now have `max_length` constraints (2048 and 256 respectively).
+- **Username validation** (Django mode): `min_length=1`, `max_length=150`, and `pattern=r"^[\w.@+\-]+$"` matching Django's `UnicodeUsernameValidator`.
+- **Lockout fail-open configurable**: New `ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN` setting (default `true`). When `false`, login is blocked if Redis lockout check fails.
+- Restrict refresh token cookie path to `{APP_PREFIX}/auth` — cookie no longer sent on every request.
+- Per-account brute force protection: Redis-backed failed login counter with configurable max attempts and lockout duration (`ACCOUNT_LOGIN_MAX_ATTEMPTS`, `ACCOUNT_LOGIN_LOCKOUT_SECONDS`). Fails open if Redis is unavailable.
+- `/logout-all` now clears the refresh token cookie from the browser.
+- Password regex expanded to allow all printable ASCII characters (was limited to `@$!%*?&`).
+- `max_length=100` enforced on all password fields at the schema boundary (Pydantic, Form, and defense-in-depth in `authenticate_user`).
+- `CORS_ALLOW_CREDENTIALS` now defaults to `True` in DEBUG, `False` in production (was always `True`).
+
+### Added
+- **Email verification**: Configurable email verification flow via `EMAIL_VERIFICATION` setting (`"mandatory"`, `"optional"`, `"none"`). New `EmailAddress` model (django-allauth pattern) tracks email addresses and verification status independently of the User model, preserving Django compatibility. HMAC-based tokens (no DB storage) auto-invalidate on state change. New endpoints: `POST /verify-email`, `POST /resend-verification`. OAuth-created users are automatically marked as verified. 5-minute cooldown between resend requests. Login gate blocks unverified users in mandatory mode.
+- **Forgot password / password reset**: Secure password reset flow via email. New endpoints: `POST /forgot-password` (anti-enumeration — always returns same response), `POST /reset-password` (HMAC token validation, password strength check, all sessions revoked). Works for both EmailUser and DjangoUser. 5-minute cooldown between reset requests.
+- **`EmailAddress` model**: Tracks email addresses with verification status per user. Follows django-allauth pattern. Supports future multi-email and email-change flows. Created automatically on signup and OAuth login.
+- **HMAC token generator** (`auth/utils/tokens.py`): Django-style token generator for email verification and password reset. Tokens are URL-safe, time-limited, and self-invalidating when user state changes (password, login, verification). No database storage required.
+- **Email templates**: HTML templates for verification (`verify_email.html`) and password reset (`reset_password.html`) emails in `templates/email/`.
+- New settings: `EMAIL_VERIFICATION`, `EMAIL_VERIFICATION_TOKEN_EXPIRE_SECONDS`, `PASSWORD_RESET_TOKEN_EXPIRE_SECONDS`, `EMAIL_COOLDOWN_SECONDS`, `EMAIL_VERIFICATION_URL`, `PASSWORD_RESET_URL`, and rate limit settings for new endpoints.
+- 55 new tests covering token generation, email verification flow, and password reset flow.
+- **Task queue (Taskiq)**: Async-native task queue backed by Redis. Includes `ListQueueBroker` with result backend, `SmartRetryMiddleware` (exponential backoff + jitter), built-in cron scheduling via `TaskiqScheduler`, and `run_in_executor` utility for CPU-bound work. Email sending can be routed through the task queue via `EMAIL_USE_TASKIQ` setting (attachments not supported through Taskiq — raises `ValueError`; console backend always sends directly). Worker and scheduler services added to `docker-compose.yaml`. New `tasks.py` included in `startapp` scaffold template. See `docs/taskiq.md`.
+- **Email backend**: Django-like pluggable email backend with async support. Ships with `ConsoleEmailBackend` (prints to stdout, default for dev) and `SMTPEmailBackend` (wraps fastapi-mail for production SMTP). Swappable via `EMAIL_BACKEND` dotted path in settings. Includes Jinja2 template rendering for HTML emails, file attachments, and convenience functions `send_email()` / `send_template_email()`. 22 new tests.
+- **OAuth2 social login**: Optional Google and GitHub sign-up/sign-in flows, toggled via `OAUTH_GOOGLE_ENABLED` / `OAUTH_GITHUB_ENABLED` settings (disabled by default).
+  - New endpoints: `GET /auth/oauth/{provider}/authorize`, `GET /auth/oauth/{provider}/callback`, `POST /auth/oauth/token`, `DELETE /auth/oauth/{provider}/link`, `POST /auth/set-password`.
+  - `OAuthAccount` model links social identities to users. Auto-links by email if a matching user exists.
+  - OAuth users receive the same JWT access + refresh tokens as password users (unified flow).
+  - OAuth-only users can set a password later (configurable via `OAUTH_ALLOW_SET_PASSWORD`, default `True`).
+  - Uses Authlib for OAuth2/OIDC protocol handling. CSRF protection via Redis-backed state tokens.
+  - 46 new tests covering both `django` and `email` auth modes (including CSRF, OAuth code exchange, lockout fail-open, username validation).
+- `expires_in` field in token responses (login, refresh) per OAuth 2.0 RFC 6749 §5.1. Returns access token lifetime in seconds.
+
+### Changed
+- Rename `/revoke` → `/logout`, `/revoke-all` → `/logout-all` for standard JWT library compatibility.
+- Remove trailing slash from `/users/me/` → `/users/me`.
+
+### Refactored
+- Extract `set_refresh_cookie()` helper — single source for cookie config.
+- Extract `get_current_user` FastAPI dependency — replaces duplicated token-to-user logic in views.
+- Extract `_encode_replacement_jwt()` helper — removes duplicated replacement-token encoding.
+- Move `normalize_email()` up to `AbstractBaseUser` — eliminates duplicate across subclasses.
+- Replace N+1 token revocation loop with bulk SQL update in `logout_user_all_devices`.
+- Add return type annotations to all auth views.
+
+### Fixed
+- **`change_password` endpoint**: Now catches `PasswordIsWeak` exception and returns HTTP 400 (was returning HTTP 500). Consistent with `signup`, `reset_password`, and `set_password` endpoints.
+- **OAuth error message leakage**: OAuth code exchange and profile fetch errors no longer expose raw exception details to the user. Internal details are logged server-side; the user receives a generic "OAuth authentication failed." message.
+- **`send_email_task` logging**: Use lazy `%s` formatting in `logger.exception` instead of f-string, consistent with SMTP backend logging style.
+- Typo in `password_validators.py` docstring.
+
+## [0.1.0] - Initial Release
+
+### Core
+- FastAPI + SQLAlchemy async boilerplate with Django-style layout.
+- `Model` / `Manager` ORM layer, `TimestampMixin`, pluggable engine (SQLite / PostgreSQL).
+- Pydantic `BaseSettings`, CLI with `startapp` / `makemigrations` / `migrate` / `shell`.
+- Central `APIRouter` aggregation, `get_async_session` dependency with auto-commit/rollback.
+
+### Auth
+- Switchable user models via `AUTH_USER_MODEL_TYPE` (`"django"` / `"email"`).
+- Django-compatible async `pbkdf2_sha256` password hashing.
+- JWT access + refresh tokens with rotation, replay detection, and grace period.
+- Redis-backed token blacklist with configurable fallback.
+- Endpoints: signup, login, refresh, logout (single/all devices), change password, deactivate, user info.
+- Rate limiting (SlowAPI + Redis) on all auth endpoints.
+- Comprehensive test suite (65 tests).

@@ -263,3 +263,6 @@ dist
 *.db
 *.sqlite
 *.sqlite3
+
+migrations/
+alembic.ini

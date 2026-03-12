@@ -35,9 +35,6 @@ class SqliteConfig(DatabaseConfig):
         return f"sqlite+aiosqlite:///{path}"
 
     def get_engine_options(self, config: dict[str, Any]) -> dict[str, Any]:
-        # Note: aiosqlite uses NullPool by default, which doesn't support
-        # pool_size or max_overflow. NullPool opens/closes connections per
-        # operation, which is appropriate for SQLite's file-locking model.
         return {"future": True}
 
 
