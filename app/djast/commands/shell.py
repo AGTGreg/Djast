@@ -1,20 +1,8 @@
-#!/usr/bin/env python
-"""
-Django-like interactive shell for Djast.
+"""Launch interactive Python shell with auto-imports."""
 
-Provides an interactive Python shell with pre-loaded models, database session,
-and settings. Supports async operations via IPython's %autoawait.
-
-Usage:
-    python manage.py shell
-
-Requires:
-    ipython
-"""
 import asyncio
 import importlib
-import inspect
-from pathlib import Path
+from contextlib import asynccontextmanager
 from typing import Any
 
 from djast.settings import settings, ROOT_DIR
@@ -22,11 +10,23 @@ from djast.database import async_session_factory, engine
 from djast.db import models
 
 
+@asynccontextmanager
+async def auto_session():
+    """Async context manager that auto-commits on success, rolls back on error."""
+    async with async_session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 def discover_apps() -> dict[str, Any]:
     """
     Auto-discover all apps with models.py files in the project.
 
-    Scans the app directory for models.py files (excluding djast/),
+    Scans the app directory for top-level models.py files (excluding djast/),
     imports the models module for each app, and returns a dictionary mapping
     app names to their models module.
 
@@ -36,23 +36,18 @@ def discover_apps() -> dict[str, Any]:
     discovered_apps: dict[str, Any] = {}
     app_dir = ROOT_DIR
 
-    # Find all models.py files, excluding djast/
-    for models_file in app_dir.rglob("models.py"):
-        # Skip djast/ directory (base models, not user models)
+    for models_file in app_dir.glob("*/models.py"):
         relative_path = models_file.relative_to(app_dir)
-        if str(relative_path).startswith("djast"):
+
+        if relative_path.parts[0] == "djast":
             continue
 
-        # Convert file path to module path
-        # e.g., app/core/models.py -> core.models
         module_parts = list(relative_path.with_suffix("").parts)
         module_name = ".".join(module_parts)
 
         try:
             module = importlib.import_module(module_name)
 
-            # Use the directory name as the app name
-            # e.g. core/models.py -> core
             if len(module_parts) >= 2:
                 app_name = module_parts[-2]
                 discovered_apps[app_name] = module
@@ -83,6 +78,7 @@ def print_banner(
 
     # Core utilities
     print("  Session:       session (async session)")
+    print("  Auto session:  auto_session (auto-commit context manager)")
     print("  Engine:        engine (SQLAlchemy async engine)")
     print("  Settings:      settings")
     print("  Base:          models.Model, models.Base")
@@ -91,14 +87,12 @@ def print_banner(
 
     # Usage hints
     print("\nUsage examples:")
-    print("  # Create a new post")
-    print("  post = await myapp.Post.objects(session).create(title='Test')")
+    print("  # Using auto_session (auto-commits on success):")
+    print("  async with auto_session() as s:")
+    print("      post = await myapp.Post.objects(s).create(title='Test')")
     print("")
-    print("  # Get all posts (assuming 'myapp' app has 'Post' model)")
+    print("  # Using session (manual commit):")
     print("  posts = await myapp.Post.objects(session).all()")
-    print("")
-    print("")
-    print("  # Don't forget to commit if needed")
     print("  await session.commit()")
 
     print("=" * 60 + "\n")
@@ -110,7 +104,6 @@ def start_ipython_shell(namespace: dict[str, Any]) -> None:
         from IPython import start_ipython
         from traitlets.config import Config
 
-        # Configure IPython for async support
         config = Config()
         config.InteractiveShellApp.exec_lines = [
             "%autoawait asyncio",
@@ -133,37 +126,27 @@ def run() -> None:
     Discovers apps, sets up the namespace with useful imports,
     and launches an interactive IPython shell.
     """
-    # Discover all apps from the project
     discovered_apps = discover_apps()
 
-    # Create an async session for convenience
     session = async_session_factory()
 
-    # Build the namespace for the shell
     namespace: dict[str, Any] = {
-        # Database utilities
         "session": session,
+        "auto_session": auto_session,
         "async_session_factory": async_session_factory,
         "engine": engine,
-        # Settings
         "settings": settings,
-        # Base model classes
         "models": models,
-        # Async helpers
         "asyncio": asyncio,
     }
 
-    # Add discovered apps to namespace
     namespace.update(discovered_apps)
 
-    # Print the startup banner
     print_banner(namespace, discovered_apps)
 
-    # Launch IPython shell
     try:
         start_ipython_shell(namespace)
     finally:
-        # Clean up: close the session
         async def cleanup():
             await session.close()
             await engine.dispose()
@@ -171,7 +154,4 @@ def run() -> None:
         try:
             asyncio.run(cleanup())
         except RuntimeError:
-            # Event loop may already be closed
             pass
-        except Exception as e:
-            print(f"Warning: Cleanup error: {e}")

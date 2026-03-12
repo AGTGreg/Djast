@@ -152,18 +152,17 @@ python manage.py shell
 -   **Auto-Imports**: Automatically imports all your models, `settings`, and the database `engine`.
 -   **Async Ready**: Pre-configured with `ipython` and `%autoawait`, so you can run `await` commands directly.
 -   **Pre-loaded Session**: A fresh async `session` is available immediately for queries.
+-   **Auto-commit Session**: Use `auto_session()` for automatic commit on success and rollback on error.
 
 **Example Usage:**
 
 ```python
-# No need to import User!
-# Fetch all users
+# Using auto_session (auto-commits on success, rolls back on error):
+async with auto_session() as s:
+    new_item = await myapp.Item.objects(s).create(name="admin")
+
+# Using session (manual commit):
 items = await myapp.Item.objects(session).all()
-
-# Create a new user
-new_item = await myapp.Item.objects(session).create(name="admin")
-
-# Commit changes
 await session.commit()
 ```
 

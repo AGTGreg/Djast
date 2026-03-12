@@ -35,7 +35,7 @@ class SqliteConfig(DatabaseConfig):
         return f"sqlite+aiosqlite:///{path}"
 
     def get_engine_options(self, config: dict[str, Any]) -> dict[str, Any]:
-        return {"future": True}
+        return {}
 
 
 class PostgresConfig(DatabaseConfig):
@@ -51,7 +51,6 @@ class PostgresConfig(DatabaseConfig):
 
     def get_engine_options(self, config: dict[str, Any]) -> dict[str, Any]:
         return {
-            "future": True,
             "pool_pre_ping": True,
             "pool_size": config.get("POOL_SIZE", 20),
             "max_overflow": config.get("MAX_OVERFLOW", 10)

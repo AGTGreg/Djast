@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Improved
+- **`db/engine.py`**: Removed dead `future=True` parameter from `SqliteConfig` and `PostgresConfig` engine options (no-op in SQLAlchemy 2.0+).
+- **`db/models.py`**: `Manager.exists()` now uses `SELECT EXISTS(...)` subquery instead of fetching the full row. Removed redundant local `func` import in `count()` (uses module-level import). Added type hints to `Model.objects()` (`session: AsyncSession`, return `Manager[Self]`).
+- **`startapp` command**: Validates module names are valid Python identifiers (rejects `my-app`, `class`, `123app`, etc.). Replaces interactive retry loop with simple error on name collision (standard CLI behavior). Removes redundant `__init__.py` creation logic.
+- **`startapp` templates**: Scaffolded apps now include `tests/` directory (with `__init__.py` and async `test_views.py` using `httpx.AsyncClient`) instead of flat `tests.py`. Added `utils/` directory and `__init__.py` to match expected app structure.
+- **`shell` command**: Added `auto_session` async context manager to namespace (auto-commits on success, rolls back on error — mirrors `get_async_session`). Model discovery now uses `glob("*/models.py")` instead of `rglob` to avoid matching nested files. Fixed fragile `startswith("djast")` path check. Removed unused imports. Narrowed cleanup error handling.
+- **`manage.py` help text**: `python manage.py` now displays command descriptions from module docstrings alongside command names.
+- **`makemigrations` command**: Refactored monolithic `detect_and_handle_renames` (330 lines) into focused module-level functions with type hints and a `MigrationOperations` dataclass. Fixed indentation bug in generated `op.rename_table()` code (unused `indent` variable). Removed dead Python <3.12 compatibility code (`ast.Str`, `hasattr(ast, "get_source_segment")`). Column rename detection now uses a heuristic — only prompts when a table has exactly 1 drop + 1 add (avoids N*M false-positive prompts). Warns if `alembic.ini` file template configuration fails silently. Removed unused `Path` import and redundant loop guard.
+- **`migrate` command**: Added `migrations/` directory existence check. Catches `CommandError` for cleaner error messages. Prints success message after applying migrations.
+- **Alembic env template**: Fixed `rglob`/`startswith` model discovery bugs (same fixes applied to `shell` command earlier).
+
 ### Security
 - **CSRF protection**: Double-submit cookie pattern for all state-changing authenticated endpoints. Login/refresh set a `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header. Configurable via `CSRF_ENABLED`, `CSRF_COOKIE_NAME`, `CSRF_HEADER_NAME`, `CSRF_TOKEN_LENGTH`.
 - **OAuth authorization code exchange**: OAuth callback no longer exposes tokens in redirect URL. Tokens are stored behind a one-time authorization code (Redis, configurable TTL via `OAUTH_CODE_TTL`). Frontend exchanges the code via `POST /auth/oauth/token`.

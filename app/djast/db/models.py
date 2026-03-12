@@ -1,12 +1,12 @@
 from __future__ import annotations
 import re
 
-from typing import Any, Optional, TypeVar, Generic, TYPE_CHECKING, Sequence
+from typing import Any, Optional, Self, TypeVar, Generic, TYPE_CHECKING, Sequence
 from datetime import datetime
 
 from pydantic import create_model
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import DateTime, func, inspect, select, delete as sa_delete
+from sqlalchemy import DateTime, exists as sa_exists, func, inspect, select, delete as sa_delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncAttrs, AsyncSession
 from sqlalchemy.orm import (
@@ -104,9 +104,8 @@ class Manager(Generic[T]):
         Returns:
             The count of matching rows.
         """
-        from sqlalchemy import func as sa_func
         session = self._get_session()
-        stmt = select(sa_func.count()).select_from(self._model)
+        stmt = select(func.count()).select_from(self._model)
         if kwargs:
             stmt = stmt.filter_by(**kwargs)
         result = await session.scalar(stmt)
@@ -122,7 +121,9 @@ class Manager(Generic[T]):
         Returns:
             True if a matching row exists, else False.
         """
-        return await self.get(**kwargs) is not None
+        session = self._get_session()
+        stmt = select(sa_exists(self._base_query().filter_by(**kwargs)))
+        return await session.scalar(stmt) or False
 
     # -------------------------------------------------------------------------
     # Mutation helpers
@@ -375,7 +376,7 @@ class Model(Base):
         await session.flush()
 
     @classmethod
-    def objects(cls, session) -> "Manager[Any]":
+    def objects(cls, session: AsyncSession) -> "Manager[Self]":
         """
         Return a Manager instance for the model class.
 
