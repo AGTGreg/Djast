@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from djast.taskiq import broker
 from djast.utils.email import EmailMessage, get_email_backend
+
+logger = logging.getLogger(__name__)
 
 
 @broker.task(retry_on_error=True)
@@ -33,4 +37,8 @@ async def send_email_task(
         attachments=[],
     )
     backend = get_email_backend()
-    return await backend.send_message(message)
+    try:
+        return await backend.send_message(message)
+    except Exception:
+        logger.exception("Failed to send email to %s (subject: %s)", to, subject)
+        raise

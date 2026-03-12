@@ -6,8 +6,10 @@ user creation/linking. Uses Authlib for OAuth2/OIDC protocol handling.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import re
+import uuid
 from typing import Any
 
 import httpx
@@ -19,6 +21,8 @@ from auth.models import User, OAuthAccount, EmailAddress
 from auth.utils.auth_backend import redis_client
 from auth import exceptions as auth_exceptions
 
+
+logger = logging.getLogger(__name__)
 
 # OAuth state token TTL in seconds
 _OAUTH_STATE_TTL = 300  # 5 minutes
@@ -126,16 +130,13 @@ async def _validate_state(state: str, provider: str) -> None:
         auth_exceptions.OAuthError: If the state is invalid or expired.
     """
     key = f"{_OAUTH_STATE_PREFIX}{state}"
-    stored_provider = await redis_client.get(key)
+    stored_provider = await redis_client.getdel(key)  # atomic get+delete
 
     if not stored_provider:
         raise auth_exceptions.OAuthError("Invalid or expired OAuth state.")
 
     if stored_provider != provider:
         raise auth_exceptions.OAuthError("OAuth state mismatch.")
-
-    # Delete after use — single-use token
-    await redis_client.delete(key)
 
 
 async def _fetch_google_profile(
@@ -258,9 +259,8 @@ async def handle_callback(
             redirect_uri=callback_url,
         )
     except Exception as exc:
-        raise auth_exceptions.OAuthError(
-            f"Failed to exchange OAuth code: {exc}"
-        )
+        logger.error(f"OAuth code exchange failed for {provider}: {exc}")
+        raise auth_exceptions.OAuthError("OAuth authentication failed.")
 
     provider_access_token = token.get("access_token", "")
     if not provider_access_token:
@@ -273,9 +273,8 @@ async def handle_callback(
     except auth_exceptions.OAuthError:
         raise
     except Exception as exc:
-        raise auth_exceptions.OAuthError(
-            f"Failed to fetch user profile: {exc}"
-        )
+        logger.error(f"OAuth profile fetch failed for {provider}: {exc}")
+        raise auth_exceptions.OAuthError("OAuth authentication failed.")
 
     return await get_or_create_oauth_user(
         session=session,
@@ -395,6 +394,9 @@ async def _create_oauth_user(
     return user
 
 
+_MAX_USERNAME_ATTEMPTS = 10
+
+
 async def _generate_username(
     session: AsyncSession,
     email: str,
@@ -402,8 +404,9 @@ async def _generate_username(
 ) -> str:
     """Generate a unique username for a new OAuth user in Django mode.
 
-    Derives from the email prefix or display name, appending a numeric
-    suffix if the username is already taken.
+    Derives from the email prefix or display name, appending a UUID suffix
+    to ensure uniqueness. Retries up to ``_MAX_USERNAME_ATTEMPTS`` times
+    with a fresh UUID each attempt.
     """
     # Start with email prefix, fall back to name
     base = email.split("@")[0] if email else name
@@ -412,13 +415,18 @@ async def _generate_username(
     # Truncate to fit Django's 150-char limit with room for suffix
     base = base[:140] or "user"
 
-    candidate = base
-    suffix = 1
-    while await User.objects(session).exists(username=candidate):
-        candidate = f"{base}{suffix}"
-        suffix += 1
+    for _ in range(_MAX_USERNAME_ATTEMPTS):
+        candidate = f"{base}_{uuid.uuid4().hex[:8]}"
+        if not await User.objects(session).exists(username=candidate):
+            return candidate
 
-    return candidate
+    logger.error(
+        f"Failed to generate unique username after "
+        f"{_MAX_USERNAME_ATTEMPTS} attempts (base: {base})"
+    )
+    raise auth_exceptions.OAuthError(
+        "Unable to generate a unique username. Please try again."
+    )
 
 
 # OAuth authorization code exchange ==========================================
@@ -453,10 +461,9 @@ async def consume_oauth_code(code: str) -> dict:
         auth_exceptions.OAuthError: If the code is invalid or expired.
     """
     key = f"{_OAUTH_CODE_PREFIX}{code}"
-    payload = await redis_client.get(key)
+    payload = await redis_client.getdel(key)  # atomic get+delete
     if not payload:
         raise auth_exceptions.OAuthError(
             "Invalid or expired authorization code."
         )
-    await redis_client.delete(key)
     return json.loads(payload)

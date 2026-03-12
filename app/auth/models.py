@@ -101,6 +101,10 @@ class AbstractBaseUser(models.Model):
         """
         return is_password_usable(self.password)
 
+    async def _set_password_hash(self, raw_password: str) -> None:
+        """Hash and set password without strength validation (internal use only)."""
+        self.password = await make_password(raw_password)
+
     async def set_password(self, raw_password: str) -> None:
         """
         Set the user's password to the given raw string,
@@ -110,7 +114,7 @@ class AbstractBaseUser(models.Model):
             raw_password: The plain-text password to set.
         """
         check_password_strength(raw_password)
-        self.password = await make_password(raw_password)
+        await self._set_password_hash(raw_password)
 
     async def authenticate(
         self,
@@ -121,7 +125,7 @@ class AbstractBaseUser(models.Model):
         Check password and update last_login on success.
         """
         async def rehash_setter(new_password: str) -> None:
-            await self.set_password(new_password)
+            await self._set_password_hash(new_password)
 
         is_correct = await check_password(
             raw_password, self.password, setter=rehash_setter)

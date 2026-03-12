@@ -217,7 +217,13 @@ async def change_password(
             detail="Old password is incorrect."
         )
 
-    await user.set_password(password_change.new_password)
+    try:
+        await user.set_password(password_change.new_password)
+    except auth_exceptions.PasswordIsWeak as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     await user.save(session)
     await auth_backend.logout_user_all_devices(
         session=session, user_id=user.id)

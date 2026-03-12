@@ -52,6 +52,9 @@ All notable changes to this project will be documented in this file.
 - Add return type annotations to all auth views.
 
 ### Fixed
+- **`change_password` endpoint**: Now catches `PasswordIsWeak` exception and returns HTTP 400 (was returning HTTP 500). Consistent with `signup`, `reset_password`, and `set_password` endpoints.
+- **OAuth error message leakage**: OAuth code exchange and profile fetch errors no longer expose raw exception details to the user. Internal details are logged server-side; the user receives a generic "OAuth authentication failed." message.
+- **`send_email_task` logging**: Use lazy `%s` formatting in `logger.exception` instead of f-string, consistent with SMTP backend logging style.
 - Typo in `password_validators.py` docstring.
 
 ## [0.1.0] - Initial Release

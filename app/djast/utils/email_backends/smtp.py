@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import smtplib
 from io import BytesIO
 from typing import Any
 
@@ -72,6 +73,6 @@ class SMTPEmailBackend(BaseEmailBackend):
             schema = self._build_schema(message)
             await self._mailer.send_message(schema)
             return True
-        except Exception:
+        except (smtplib.SMTPException, ConnectionError, TimeoutError, OSError):
             logger.exception("Failed to send email to %s", message.to)
             return False

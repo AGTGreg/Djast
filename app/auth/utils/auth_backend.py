@@ -350,7 +350,7 @@ def decode_token(token: str, *, verify_exp: bool = True) -> TokenData:
     return TokenData(**payload)
 
 
-class TokenBlacklist():
+class TokenBlacklist:
     def __init__(self):
         self.base_prefix = "blacklist:"
         self.token_prefix = f"{self.base_prefix}token:"
@@ -407,6 +407,9 @@ class TokenBlacklist():
             return settings.FALLBACK_IS_BLACKLISTED
 
 
+token_blacklist = TokenBlacklist()
+
+
 async def validate_access_token(
     access_token: Annotated[str, Depends(oauth2_scheme)]
 ) -> TokenData:
@@ -429,7 +432,7 @@ async def validate_access_token(
     if access_token_data.exp < current_time:
         raise auth_exceptions.credentials_exception()
 
-    if await TokenBlacklist().is_blacklisted(access_token_data):
+    if await token_blacklist.is_blacklisted(access_token_data):
         raise auth_exceptions.credentials_exception()
 
     return access_token_data
@@ -614,7 +617,7 @@ async def logout_user(
     Returns:
         None
     """
-    await TokenBlacklist().add_token(token_data)
+    await token_blacklist.add_token(token_data)
     if refresh_token:
         # If this refresh token was already rotated (used_at set), revoke the
         # replacement token too. This closes a common race where the client
@@ -675,7 +678,7 @@ async def logout_user_all_devices(
     await session.flush()
 
     # Blacklist all access tokens for this user
-    await TokenBlacklist().add_all_for_user(user_id=user_id)
+    await token_blacklist.add_all_for_user(user_id=user_id)
 
     await cleanup_expired_refresh_tokens(session)
 

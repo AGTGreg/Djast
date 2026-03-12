@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from taskiq import InMemoryBroker
 
 from djast.settings import settings
 
+if TYPE_CHECKING:
+    from taskiq_redis import ListQueueBroker
+
 logger = logging.getLogger(__name__)
 
 
-def _build_broker() -> InMemoryBroker:
+def _build_broker() -> InMemoryBroker | ListQueueBroker:
     """Build the Taskiq broker from settings.
 
     Returns an ``InMemoryBroker`` when the URL is empty or set to
