@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Improved
+- **`startapp` command**: Validates module names are valid Python identifiers (rejects `my-app`, `class`, `123app`, etc.). Replaces interactive retry loop with simple error on name collision (standard CLI behavior). Removes redundant `__init__.py` creation logic.
+- **`startapp` templates**: Scaffolded apps now include `tests/` directory (with `__init__.py` and async `test_views.py` using `httpx.AsyncClient`) instead of flat `tests.py`. Added `utils/` directory and `__init__.py` to match expected app structure.
+- **`shell` command**: Added `auto_session` async context manager to namespace (auto-commits on success, rolls back on error — mirrors `get_async_session`). Model discovery now uses `glob("*/models.py")` instead of `rglob` to avoid matching nested files. Fixed fragile `startswith("djast")` path check. Removed unused imports. Narrowed cleanup error handling.
+- **`manage.py` help text**: `python manage.py` now displays command descriptions from module docstrings alongside command names.
+
 ### Security
 - **CSRF protection**: Double-submit cookie pattern for all state-changing authenticated endpoints. Login/refresh set a `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header. Configurable via `CSRF_ENABLED`, `CSRF_COOKIE_NAME`, `CSRF_HEADER_NAME`, `CSRF_TOKEN_LENGTH`.
 - **OAuth authorization code exchange**: OAuth callback no longer exposes tokens in redirect URL. Tokens are stored behind a one-time authorization code (Redis, configurable TTL via `OAUTH_CODE_TTL`). Frontend exchanges the code via `POST /auth/oauth/token`.

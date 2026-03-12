@@ -1,3 +1,5 @@
+"""Generate a new Alembic migration."""
+
 import ast
 import shutil
 import subprocess

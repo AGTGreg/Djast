@@ -8,23 +8,37 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
-def get_available_commands():
+def get_available_commands() -> dict[str, str]:
+    """Return a dict mapping command names to their help text (module docstring)."""
     helpers_path = Path(__file__).resolve().parent / "djast" / "commands"
-    commands = []
+    commands: dict[str, str] = {}
     if helpers_path.exists():
         for _, name, _ in pkgutil.iter_modules([str(helpers_path)]):
-            commands.append(name)
-    return sorted(commands)
+            try:
+                module = importlib.import_module(f"djast.commands.{name}")
+                commands[name] = (module.__doc__ or "").strip()
+            except Exception:
+                commands[name] = ""
+    return dict(sorted(commands.items()))
+
+
+def print_help(commands: dict[str, str]) -> None:
+    print("Usage: python manage.py <command> [options]")
+    print("Available commands:")
+    max_name_len = max((len(name) for name in commands), default=0)
+    for name, description in commands.items():
+        padding = " " * (max_name_len - len(name) + 2)
+        if description:
+            print(f"  {name}{padding}{description}")
+        else:
+            print(f"  {name}")
 
 
 def main():
     available_commands = get_available_commands()
 
     if len(sys.argv) < 2:
-        print("Usage: python manage.py <command> [options]")
-        print("Available commands:")
-        for cmd in available_commands:
-            print(f"  {cmd}")
+        print_help(available_commands)
         sys.exit(1)
 
     command_name = sys.argv[1]
@@ -32,16 +46,12 @@ def main():
 
     if command_name not in available_commands:
         print(f"Unknown command: '{command_name}'")
-        print("Available commands:")
-        for cmd in available_commands:
-            print(f"  {cmd}")
+        print_help(available_commands)
         sys.exit(1)
 
     try:
-        # Dynamically import the module
         module = importlib.import_module(f"djast.commands.{command_name}")
 
-        # Check if the module has a 'run' function
         if hasattr(module, "run"):
             module.run(*args)
         else:
@@ -49,7 +59,6 @@ def main():
             sys.exit(1)
 
     except TypeError as e:
-        # This catches arguments mismatch for the run function
         print(f"Error executing command '{command_name}': {e}")
         sys.exit(1)
     except Exception as e:
