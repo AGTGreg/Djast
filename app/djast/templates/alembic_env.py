@@ -16,9 +16,9 @@ if str(ROOT_DIR) not in sys.path:
 
 # Import all models
 def load_models():
-    for models_file in ROOT_DIR.rglob("models.py"):
+    for models_file in ROOT_DIR.glob("*/models.py"):
         relative_path = models_file.relative_to(ROOT_DIR)
-        if str(relative_path).startswith("djast"):
+        if relative_path.parts[0] == "djast":
             continue
         module_parts = list(relative_path.with_suffix("").parts)
         module_name = ".".join(module_parts)

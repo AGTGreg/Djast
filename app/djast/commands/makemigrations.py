@@ -3,7 +3,11 @@
 import ast
 import shutil
 import subprocess
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
 from alembic.config import Config
 from alembic import command
 
@@ -11,8 +15,316 @@ from djast.settings import ROOT_DIR
 
 TEMPLATES_DIR = ROOT_DIR / "djast" / "templates"
 
+Replacement = tuple[ast.stmt, str]
 
-def detect_and_handle_renames(file_path):
+
+@dataclass
+class MigrationOperations:
+    """Parsed Alembic migration operations from upgrade/downgrade functions."""
+
+    created_tables: dict[str, ast.stmt] = field(default_factory=dict)
+    dropped_tables: dict[str, ast.stmt] = field(default_factory=dict)
+    added_columns: list[dict[str, Any]] = field(default_factory=list)
+    dropped_columns: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _get_name(node: ast.expr) -> str | None:
+    """Extract a string constant value from an AST node."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _is_op_call(call: ast.Call) -> bool:
+    """Check if a Call node is an `op.<method>(...)` call."""
+    return (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "op"
+    )
+
+
+def _extract_column_name(col_def: ast.expr) -> str | None:
+    """Extract the column name from a `Column(name, ...)` or `sa.Column(name, ...)` call."""
+    if not isinstance(col_def, ast.Call):
+        return None
+    if (
+        isinstance(col_def.func, ast.Name) and col_def.func.id == "Column"
+    ) or (
+        isinstance(col_def.func, ast.Attribute)
+        and col_def.func.attr == "Column"
+    ):
+        if col_def.args:
+            return _get_name(col_def.args[0])
+    return None
+
+
+def _extract_top_level_ops(
+    stmt: ast.stmt, ops: MigrationOperations
+) -> None:
+    """Extract operations from a top-level `op.<method>(...)` statement."""
+    if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+        return
+    call = stmt.value
+    if not _is_op_call(call):
+        return
+
+    attr = call.func.attr
+    if attr == "create_table":
+        name = _get_name(call.args[0])
+        if name:
+            ops.created_tables[name] = stmt
+    elif attr == "drop_table":
+        name = _get_name(call.args[0])
+        if name:
+            ops.dropped_tables[name] = stmt
+    elif attr == "add_column":
+        t_name = _get_name(call.args[0])
+        c_name = _extract_column_name(call.args[1]) if len(call.args) > 1 else None
+        if t_name and c_name:
+            ops.added_columns.append(
+                {"table": t_name, "col": c_name, "node": stmt, "is_batch": False}
+            )
+    elif attr == "drop_column":
+        t_name = _get_name(call.args[0])
+        c_name = _get_name(call.args[1]) if len(call.args) > 1 else None
+        if t_name and c_name:
+            ops.dropped_columns.append(
+                {"table": t_name, "col": c_name, "node": stmt, "is_batch": False}
+            )
+
+
+def _extract_batch_ops(
+    stmt: ast.With, ops: MigrationOperations
+) -> None:
+    """Extract operations from a `with op.batch_alter_table(...) as batch_op:` block."""
+    table_name = None
+    batch_var = None
+
+    for item in stmt.items:
+        if not isinstance(item.context_expr, ast.Call):
+            continue
+        c = item.context_expr
+        if isinstance(c.func, ast.Attribute) and c.func.attr == "batch_alter_table":
+            if c.args:
+                table_name = _get_name(c.args[0])
+            if item.optional_vars and isinstance(item.optional_vars, ast.Name):
+                batch_var = item.optional_vars.id
+
+    if not (table_name and batch_var):
+        return
+
+    for sub_stmt in stmt.body:
+        if not (isinstance(sub_stmt, ast.Expr) and isinstance(sub_stmt.value, ast.Call)):
+            continue
+        sub_call = sub_stmt.value
+        if not (
+            isinstance(sub_call.func, ast.Attribute)
+            and isinstance(sub_call.func.value, ast.Name)
+            and sub_call.func.value.id == batch_var
+        ):
+            continue
+
+        if sub_call.func.attr == "add_column":
+            c_name = _extract_column_name(sub_call.args[0]) if sub_call.args else None
+            if c_name:
+                ops.added_columns.append(
+                    {
+                        "table": table_name, "col": c_name, "node": sub_stmt,
+                        "is_batch": True, "batch_var": batch_var,
+                    }
+                )
+        elif sub_call.func.attr == "drop_column":
+            c_name = _get_name(sub_call.args[0]) if sub_call.args else None
+            if c_name:
+                ops.dropped_columns.append(
+                    {
+                        "table": table_name, "col": c_name, "node": sub_stmt,
+                        "is_batch": True, "batch_var": batch_var,
+                    }
+                )
+
+
+def extract_operations(func_node: ast.FunctionDef | None) -> MigrationOperations:
+    """Parse an upgrade/downgrade function and extract all Alembic operations."""
+    ops = MigrationOperations()
+    if not func_node:
+        return ops
+
+    for stmt in func_node.body:
+        if isinstance(stmt, ast.With):
+            _extract_batch_ops(stmt, ops)
+        else:
+            _extract_top_level_ops(stmt, ops)
+
+    return ops
+
+
+def detect_table_renames(
+    up_ops: MigrationOperations, down_ops: MigrationOperations
+) -> list[Replacement]:
+    """Prompt user for table renames and return AST node replacements."""
+    replacements: list[Replacement] = []
+
+    for drop_name, drop_node in list(up_ops.dropped_tables.items()):
+        for create_name, create_node in list(up_ops.created_tables.items()):
+            answer = input(
+                f"Did you rename table from '{drop_name}' to '{create_name}'? [y/N]: "
+            )
+            if answer.lower() != "y":
+                continue
+
+            # Upgrade: replace drop + create with rename
+            indent = " " * create_node.col_offset
+            replacements.append((drop_node, ""))
+            replacements.append(
+                (create_node, f"{indent}op.rename_table('{drop_name}', '{create_name}')\n")
+            )
+
+            # Downgrade: reverse the rename
+            down_create = down_ops.created_tables.get(drop_name)
+            down_drop = down_ops.dropped_tables.get(create_name)
+            if down_create and down_drop:
+                indent_down = " " * down_create.col_offset
+                replacements.append(
+                    (down_create, f"{indent_down}op.rename_table('{create_name}', '{drop_name}')\n")
+                )
+                replacements.append((down_drop, ""))
+
+            del up_ops.dropped_tables[drop_name]
+            del up_ops.created_tables[create_name]
+            break
+
+    return replacements
+
+
+def detect_column_renames(
+    up_ops: MigrationOperations, down_ops: MigrationOperations
+) -> list[Replacement]:
+    """Prompt user for column renames and return AST node replacements.
+
+    Only prompts when a table has exactly 1 dropped and 1 added column to
+    avoid excessive false-positive prompts.
+    """
+    replacements: list[Replacement] = []
+
+    # Group by table to apply heuristic
+    drops_by_table: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    adds_by_table: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for drop in up_ops.dropped_columns:
+        drops_by_table[drop["table"]].append(drop)
+    for add in up_ops.added_columns:
+        adds_by_table[add["table"]].append(add)
+
+    for table, table_drops in drops_by_table.items():
+        table_adds = adds_by_table.get(table, [])
+        if len(table_drops) != 1 or len(table_adds) != 1:
+            if table_drops and table_adds:
+                print(
+                    f"Note: Table '{table}' has multiple column changes. "
+                    "Edit the migration manually if any are renames."
+                )
+            continue
+
+        drop = table_drops[0]
+        add = table_adds[0]
+
+        answer = input(
+            f"Did you rename column '{drop['col']}' to '{add['col']}' "
+            f"in table '{drop['table']}'? [y/N]: "
+        )
+        if answer.lower() != "y":
+            continue
+
+        # Upgrade: replace drop + add with alter_column rename
+        replacements.append((drop["node"], ""))
+        if add["is_batch"]:
+            new_code = (
+                f"{add['batch_var']}.alter_column("
+                f"'{drop['col']}', new_column_name='{add['col']}')"
+            )
+        else:
+            new_code = (
+                f"op.alter_column('{drop['table']}', "
+                f"'{drop['col']}', new_column_name='{add['col']}')"
+            )
+        replacements.append((add["node"], new_code))
+
+        # Downgrade: reverse the rename
+        down_add = next(
+            (da for da in down_ops.added_columns
+             if da["table"] == drop["table"] and da["col"] == drop["col"]),
+            None,
+        )
+        down_drop = next(
+            (dd for dd in down_ops.dropped_columns
+             if dd["table"] == drop["table"] and dd["col"] == add["col"]),
+            None,
+        )
+
+        if down_add and down_drop:
+            replacements.append((down_add["node"], ""))
+            if down_drop["is_batch"]:
+                new_code_down = (
+                    f"{down_drop['batch_var']}.alter_column("
+                    f"'{add['col']}', new_column_name='{drop['col']}')"
+                )
+            else:
+                new_code_down = (
+                    f"op.alter_column('{drop['table']}', "
+                    f"'{add['col']}', new_column_name='{drop['col']}')"
+                )
+            replacements.append((down_drop["node"], new_code_down))
+
+        up_ops.dropped_columns.remove(drop)
+        up_ops.added_columns.remove(add)
+
+    return replacements
+
+
+def _get_node_range(
+    node: ast.stmt, lines: list[str]
+) -> tuple[int, int]:
+    """Convert an AST node's line/col position to a character offset range."""
+    start_line = node.lineno - 1
+    start_col = node.col_offset
+    end_line = node.end_lineno - 1
+    end_col = node.end_col_offset
+
+    start_idx = sum(len(lines[i]) for i in range(start_line)) + start_col
+    end_idx = sum(len(lines[i]) for i in range(end_line)) + end_col
+
+    return start_idx, end_idx
+
+
+def apply_replacements(
+    file_path: Path, content: str, replacements: list[Replacement]
+) -> None:
+    """Apply AST node replacements to a migration file."""
+    if not replacements:
+        return
+
+    lines = content.splitlines(keepends=True)
+    repl_ranges = []
+    for node, text in replacements:
+        s, e = _get_node_range(node, lines)
+        repl_ranges.append((s, e, text))
+
+    # Apply in reverse order to preserve earlier offsets
+    repl_ranges.sort(key=lambda x: x[0], reverse=True)
+
+    new_content = content
+    for s, e, text in repl_ranges:
+        new_content = new_content[:s] + text + new_content[e:]
+
+    with open(file_path, "w") as f:
+        f.write(new_content)
+
+    print("Applied rename changes to migration.")
+
+
+def detect_and_handle_renames(file_path: Path) -> None:
+    """Detect table/column renames in a migration and rewrite as rename operations."""
     with open(file_path, "r") as f:
         content = f.read()
 
@@ -33,315 +345,23 @@ def detect_and_handle_renames(file_path):
     if not upgrade_node:
         return
 
-    def get_name(node):
-        if isinstance(node, ast.Constant):
-            return node.value
-        if isinstance(node, ast.Str):
-            return node.s
-        return None
+    up_ops = extract_operations(upgrade_node)
+    down_ops = extract_operations(downgrade_node)
 
-    def extract_operations(func_node):
-        created_tables = {}
-        dropped_tables = {}
-        added_columns = []
-        dropped_columns = []
+    replacements: list[Replacement] = []
+    replacements.extend(detect_table_renames(up_ops, down_ops))
+    replacements.extend(detect_column_renames(up_ops, down_ops))
 
-        if not func_node:
-            return created_tables, dropped_tables, added_columns, dropped_columns
-
-        for stmt in func_node.body:
-            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                call = stmt.value
-                if (
-                    isinstance(call.func, ast.Attribute)
-                    and isinstance(call.func.value, ast.Name)
-                    and call.func.value.id == "op"
-                ):
-                    if call.func.attr == "create_table":
-                        name = get_name(call.args[0])
-                        if name:
-                            created_tables[name] = stmt
-                    elif call.func.attr == "drop_table":
-                        name = get_name(call.args[0])
-                        if name:
-                            dropped_tables[name] = stmt
-                    elif call.func.attr == "add_column":
-                        t_name = get_name(call.args[0])
-                        c_name = None
-                        if len(call.args) > 1:
-                            col_def = call.args[1]
-                            if isinstance(col_def, ast.Call):
-                                if (
-                                    isinstance(col_def.func, ast.Name)
-                                    and col_def.func.id == "Column"
-                                ) or (
-                                    isinstance(col_def.func, ast.Attribute)
-                                    and col_def.func.attr == "Column"
-                                ):
-                                    if col_def.args:
-                                        c_name = get_name(col_def.args[0])
-                        if t_name and c_name:
-                            added_columns.append(
-                                {
-                                    "table": t_name,
-                                    "col": c_name,
-                                    "node": stmt,
-                                    "is_batch": False,
-                                }
-                            )
-                    elif call.func.attr == "drop_column":
-                        t_name = get_name(call.args[0])
-                        c_name = (
-                            get_name(call.args[1])
-                            if len(call.args) > 1
-                            else None
-                        )
-                        if t_name and c_name:
-                            dropped_columns.append(
-                                {
-                                    "table": t_name,
-                                    "col": c_name,
-                                    "node": stmt,
-                                    "is_batch": False,
-                                }
-                            )
-
-            elif isinstance(stmt, ast.With):
-                is_batch = False
-                table_name = None
-                batch_var = None
-
-                for item in stmt.items:
-                    if isinstance(item.context_expr, ast.Call):
-                        c = item.context_expr
-                        if (
-                            isinstance(c.func, ast.Attribute)
-                            and c.func.attr == "batch_alter_table"
-                        ):
-                            if c.args:
-                                table_name = get_name(c.args[0])
-                            if item.optional_vars and isinstance(
-                                item.optional_vars, ast.Name
-                            ):
-                                batch_var = item.optional_vars.id
-                                is_batch = True
-
-                if is_batch and table_name and batch_var:
-                    for sub_stmt in stmt.body:
-                        if isinstance(sub_stmt, ast.Expr) and isinstance(
-                            sub_stmt.value, ast.Call
-                        ):
-                            sub_call = sub_stmt.value
-                            if (
-                                isinstance(sub_call.func, ast.Attribute)
-                                and isinstance(sub_call.func.value, ast.Name)
-                                and sub_call.func.value.id == batch_var
-                            ):
-                                if sub_call.func.attr == "add_column":
-                                    c_name = None
-                                    if sub_call.args:
-                                        col_def = sub_call.args[0]
-                                        if isinstance(col_def, ast.Call):
-                                            if (
-                                                isinstance(
-                                                    col_def.func, ast.Name
-                                                )
-                                                and col_def.func.id == "Column"
-                                            ) or (
-                                                isinstance(
-                                                    col_def.func, ast.Attribute
-                                                )
-                                                and col_def.func.attr
-                                                == "Column"
-                                            ):
-                                                if col_def.args:
-                                                    c_name = get_name(
-                                                        col_def.args[0]
-                                                    )
-                                    if c_name:
-                                        added_columns.append(
-                                            {
-                                                "table": table_name,
-                                                "col": c_name,
-                                                "node": sub_stmt,
-                                                "is_batch": True,
-                                                "batch_var": batch_var,
-                                            }
-                                        )
-                                elif sub_call.func.attr == "drop_column":
-                                    c_name = (
-                                        get_name(sub_call.args[0])
-                                        if sub_call.args
-                                        else None
-                                    )
-                                    if c_name:
-                                        dropped_columns.append(
-                                            {
-                                                "table": table_name,
-                                                "col": c_name,
-                                                "node": sub_stmt,
-                                                "is_batch": True,
-                                                "batch_var": batch_var,
-                                            }
-                                        )
-        return created_tables, dropped_tables, added_columns, dropped_columns
-
-    (
-        up_created_tables,
-        up_dropped_tables,
-        up_added_columns,
-        up_dropped_columns,
-    ) = extract_operations(upgrade_node)
-    (
-        down_created_tables,
-        down_dropped_tables,
-        down_added_columns,
-        down_dropped_columns,
-    ) = extract_operations(downgrade_node)
-
-    replacements = []
-
-    # Check table renames
-    for drop_name, drop_node in list(up_dropped_tables.items()):
-        for create_name, create_node in list(up_created_tables.items()):
-            if (
-                drop_name in up_dropped_tables
-                and create_name in up_created_tables
-            ):
-                answer = input(
-                    f"Did you rename table from '{drop_name}' to '{create_name}'? [y/N]: "
-                )
-                if answer.lower() == "y":
-                    # Upgrade changes
-                    replacements.append((drop_node, ""))
-
-                    indent = " " * create_node.col_offset
-                    new_code = f"op.rename_table('{drop_name}', '{create_name}')\n"
-
-                    replacements.append((create_node, new_code))
-
-                    # Downgrade changes
-                    # In downgrade, we expect create_table(drop_name) and drop_table(create_name)
-                    down_create_node = down_created_tables.get(drop_name)
-                    down_drop_node = down_dropped_tables.get(create_name)
-
-                    if down_create_node and down_drop_node:
-                        indent_down = " " * down_create_node.col_offset
-                        new_code_down = f"op.rename_table('{create_name}', '{drop_name}')\n"
-
-                        replacements.append((down_create_node, new_code_down))
-                        replacements.append((down_drop_node, ""))
-
-                    del up_dropped_tables[drop_name]
-                    del up_created_tables[create_name]
-                    break
-
-    # Check column renames
-    for drop in list(up_dropped_columns):
-        for add in list(up_added_columns):
-            if drop["table"] == add["table"]:
-                answer = input(
-                    f"Did you rename column '{drop['col']}' to '{add['col']}' in table '{drop['table']}'? [y/N]: "
-                )
-                if answer.lower() == "y":
-                    # Upgrade changes
-                    replacements.append((drop["node"], ""))
-
-                    if add["is_batch"]:
-                        new_code = f"{add['batch_var']}.alter_column('{drop['col']}', new_column_name='{add['col']}')"
-                    else:
-                        new_code = f"op.alter_column('{drop['table']}', '{drop['col']}', new_column_name='{add['col']}')"
-
-                    replacements.append((add["node"], new_code))
-
-                    # Downgrade changes
-                    # In downgrade, we expect add_column(drop['col']) and drop_column(add['col'])
-                    down_add_node = None
-                    down_drop_node = None
-
-                    for da in down_added_columns:
-                        if (
-                            da["table"] == drop["table"]
-                            and da["col"] == drop["col"]
-                        ):
-                            down_add_node = da
-                            break
-
-                    for dd in down_dropped_columns:
-                        if (
-                            dd["table"] == drop["table"]
-                            and dd["col"] == add["col"]
-                        ):
-                            down_drop_node = dd
-                            break
-
-                    if down_add_node and down_drop_node:
-                        replacements.append((down_add_node["node"], ""))
-
-                        if down_drop_node["is_batch"]:
-                            new_code_down = f"{down_drop_node['batch_var']}.alter_column('{add['col']}', new_column_name='{drop['col']}')"
-                        else:
-                            new_code_down = f"op.alter_column('{drop['table']}', '{add['col']}', new_column_name='{drop['col']}')"
-
-                        replacements.append(
-                            (down_drop_node["node"], new_code_down)
-                        )
-
-                    up_dropped_columns.remove(drop)
-                    up_added_columns.remove(add)
-                    break
-
-    if replacements:
-        lines = content.splitlines(keepends=True)
-
-        def get_range(node):
-            start_line = node.lineno - 1
-            start_col = node.col_offset
-            end_line = node.end_lineno - 1
-            end_col = node.end_col_offset
-
-            start_idx = 0
-            for i in range(start_line):
-                start_idx += len(lines[i])
-            start_idx += start_col
-
-            end_idx = 0
-            for i in range(end_line):
-                end_idx += len(lines[i])
-            end_idx += end_col
-
-            return start_idx, end_idx
-
-        repl_ranges = []
-        for node, text in replacements:
-            s, e = get_range(node)
-            repl_ranges.append((s, e, text))
-
-        repl_ranges.sort(key=lambda x: x[0], reverse=True)
-
-        new_content = content
-        for s, e, text in repl_ranges:
-            new_content = new_content[:s] + text + new_content[e:]
-
-        with open(file_path, "w") as f:
-            f.write(new_content)
-
-        print("Applied rename changes to migration.")
+    apply_replacements(file_path, content, replacements)
 
 
-def run(message: str = "auto"):
-    """ Creates a new Alembic migration with the given message. If Alembic is
-    not initialized, then it initializes it first.
-
-    Args:
-        message (str): The message for the new migration. Defaults to "auto".
-    """
+def run(message: str = "auto") -> None:
+    """Create a new Alembic migration. Initializes Alembic on first run."""
     alembic_ini = ROOT_DIR / "alembic.ini"
     migrations_dir = ROOT_DIR / "migrations"
 
     if not alembic_ini.exists():
         print("Initializing Alembic...")
-        # Run alembic init -t async migrations
         subprocess.run(
             ["alembic", "init", "-t", "async", "migrations"],
             cwd=ROOT_DIR,
@@ -355,12 +375,19 @@ def run(message: str = "auto"):
         with open(alembic_ini, "r") as f:
             ini_content = f.read()
 
+        original_ini = ini_content
         ini_content = ini_content.replace(
             "# file_template = %%(year)d_%%(month).2d_%%(day).2d_"
             "%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s",
             "file_template = %%(year)d_%%(month).2d_%%(day).2d_"
             "%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s",
         )
+
+        if ini_content == original_ini:
+            print(
+                "Warning: Could not set file_template in alembic.ini. "
+                "You may need to configure it manually."
+            )
 
         with open(alembic_ini, "w") as f:
             f.write(ini_content)
@@ -393,12 +420,7 @@ def run(message: str = "auto"):
                     isinstance(node, ast.FunctionDef)
                     and node.name == "upgrade"
                 ):
-                    if hasattr(ast, "get_source_segment"):
-                        upgrade_code = ast.get_source_segment(content, node)
-                    else:
-                        # Fallback for older python versions if needed,
-                        # though get_source_segment is 3.8+
-                        upgrade_code = content
+                    upgrade_code = ast.get_source_segment(content, node)
                     break
         except Exception:
             upgrade_code = content
