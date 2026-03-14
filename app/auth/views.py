@@ -42,12 +42,6 @@ from auth.utils import oauth as oauth_utils
 from auth import exceptions as auth_exceptions
 
 from djast.rate_limit import limiter
-from djast.utils.csrf import (
-    csrf_exempt,
-    generate_csrf_token,
-    set_csrf_cookie,
-    delete_csrf_cookie,
-)
 
 router = APIRouter()
 
@@ -62,7 +56,6 @@ if settings.AUTH_USER_MODEL_TYPE == "email":
     response_model=CreateUserResponse,
     status_code=status.HTTP_201_CREATED
 )
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_SIGNUP)
 async def signup(
     request: Request,
@@ -107,7 +100,6 @@ async def signup(
 
 
 @router.post("/token", response_model=AccessToken)
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_LOGIN)
 async def login(
     request: Request,
@@ -126,7 +118,6 @@ async def login(
             password=form_data.password
         )
         set_refresh_cookie(response, refresh_token)
-        set_csrf_cookie(response, generate_csrf_token())
         return AccessToken(
             access_token=access_token,
             token_type="bearer",
@@ -156,7 +147,6 @@ async def login(
 
 
 @router.post("/refresh", response_model=AccessToken)
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_REFRESH)
 async def refresh_token(
     request: Request,
@@ -181,7 +171,6 @@ async def refresh_token(
             refresh_token=refresh_token
         )
         set_refresh_cookie(response, refresh_token)
-        set_csrf_cookie(response, generate_csrf_token())
         return AccessToken(
             access_token=access_token,
             token_type="bearer",
@@ -252,7 +241,6 @@ async def logout(
 
     response.delete_cookie(
         key="refresh_token", path=f"{settings.APP_PREFIX}/auth")
-    delete_csrf_cookie(response)
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
@@ -272,7 +260,6 @@ async def logout_all_devices(
     )
     response.delete_cookie(
         key="refresh_token", path=f"{settings.APP_PREFIX}/auth")
-    delete_csrf_cookie(response)
 
 
 @router.post("/deactivate", status_code=status.HTTP_204_NO_CONTENT)
@@ -303,7 +290,6 @@ async def read_users_me(
 # Email Verification & Password Reset =========================================
 
 @router.post("/verify-email", response_model=BaseResponse)
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_VERIFY_EMAIL)
 async def verify_email(
     request: Request,
@@ -381,7 +367,6 @@ async def resend_verification(
 
 
 @router.post("/forgot-password", response_model=BaseResponse)
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_PASSWORD_RESET_REQUEST)
 async def forgot_password(
     request: Request,
@@ -415,7 +400,6 @@ async def forgot_password(
 
 
 @router.post("/reset-password", response_model=BaseResponse)
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_PASSWORD_RESET_CONFIRM)
 async def reset_password(
     request: Request,
@@ -552,7 +536,6 @@ async def oauth_callback(
 
 
 @router.post("/oauth/token", response_model=AccessToken)
-@csrf_exempt
 @limiter.limit(settings.AUTH_RATE_LIMIT_OAUTH)
 async def oauth_token_exchange(
     request: Request,
@@ -569,7 +552,6 @@ async def oauth_token_exchange(
         )
 
     set_refresh_cookie(response, token_data["refresh_token"])
-    set_csrf_cookie(response, generate_csrf_token())
 
     return AccessToken(
         access_token=token_data["access_token"],

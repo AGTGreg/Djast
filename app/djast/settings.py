@@ -103,8 +103,7 @@ class Settings(BaseSettings):
     ]
     CORS_ALLOW_CREDENTIALS: bool = False
 
-    # CSRF Protection (Double-Submit Cookie)
-    CSRF_ENABLED: bool = True
+    # CSRF Protection (Double-Submit Cookie) — opt-in per endpoint
     CSRF_COOKIE_NAME: str = "csrf_token"
     CSRF_HEADER_NAME: str = "X-CSRF-Token"
     CSRF_TOKEN_LENGTH: int = 32

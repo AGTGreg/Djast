@@ -53,13 +53,6 @@ def _extract_access_token(token_response_json: dict) -> str:
     return token_response_json["access_token"]
 
 
-def _csrf_headers(client: AsyncClient) -> dict[str, str]:
-    """Read the csrf_token cookie from the client jar and return it as a header."""
-    csrf = client.cookies.get(settings.CSRF_COOKIE_NAME)
-    if csrf:
-        return {settings.CSRF_HEADER_NAME: csrf}
-    return {}
-
 
 # -----------------------------------------------------------------------------
 # Fixtures
@@ -463,12 +456,11 @@ async def test_resend_verification_already_verified(auth_client):
     )
     assert login_resp.status_code == 200
     access_token = _extract_access_token(login_resp.json())
-    csrf = _csrf_headers(client)
 
     # Try to resend verification
     resp = await client.post(
         f"{_auth_prefix()}/resend-verification",
-        headers={"Authorization": f"Bearer {access_token}", **csrf},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Email is already verified."
@@ -495,9 +487,8 @@ async def test_resend_verification_cooldown(auth_client):
     )
     assert login_resp.status_code == 200
     access_token = _extract_access_token(login_resp.json())
-    csrf = _csrf_headers(client)
 
-    auth_headers = {"Authorization": f"Bearer {access_token}", **csrf}
+    auth_headers = {"Authorization": f"Bearer {access_token}"}
 
     # First resend should succeed (mock out send_verification_email entirely)
     with patch(

@@ -1,42 +1,28 @@
-"""Double-submit cookie CSRF protection.
+"""Opt-in double-submit cookie CSRF protection.
 
-Enforced globally via ``csrf_protect`` (added as an app-level dependency in
-``main.py``).  All state-changing requests (POST, PUT, PATCH, DELETE) are
-checked by default.  Use the ``@csrf_exempt`` decorator on individual
-endpoints that must skip the check (login, signup, token exchange, etc.).
+CSRF is **not** enforced globally.  Instead, endpoints that need it
+explicitly declare ``csrf_protect`` as a FastAPI dependency::
 
-This mirrors Django's ``CsrfViewMiddleware`` + ``@csrf_exempt`` pattern.
+    from djast.utils.csrf import csrf_protect
+
+    @router.post("/my-endpoint", dependencies=[Depends(csrf_protect)])
+    async def my_endpoint(request: Request):
+        ...
+
+This is the correct pattern for an API framework that authenticates via
+Bearer tokens (which are immune to CSRF).  CSRF protection is only
+meaningful for endpoints that rely on cookie-based authentication
+(e.g., the refresh-token endpoint).
+
+Utility helpers (``generate_csrf_token``, ``set_csrf_cookie``,
+``delete_csrf_cookie``) remain available for endpoints that issue or
+clear CSRF cookies.
 """
 import secrets
-from typing import Callable
 
 from fastapi import Request, HTTPException, status, Response
 
 from djast.settings import settings
-
-
-# Registry of endpoint functions that skip CSRF validation.
-_csrf_exempt_endpoints: set[Callable] = set()
-
-# HTTP methods that never require CSRF validation.
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
-
-
-def csrf_exempt(func: Callable) -> Callable:
-    """Mark an endpoint as exempt from CSRF protection.
-
-    Usage::
-
-        @router.post("/token")
-        @csrf_exempt
-        async def login(request: Request, ...):
-            ...
-
-    The decorator must be placed **after** ``@router`` so it wraps the
-    actual function that FastAPI registers as the route endpoint.
-    """
-    _csrf_exempt_endpoints.add(func)
-    return func
 
 
 def generate_csrf_token() -> str:
@@ -65,23 +51,17 @@ def delete_csrf_cookie(response: Response) -> None:
 
 
 async def csrf_protect(request: Request) -> None:
-    """Global FastAPI dependency that enforces CSRF on state-changing requests.
+    """FastAPI dependency that enforces double-submit cookie CSRF validation.
 
-    Added to the application via ``app = FastAPI(dependencies=[...])``.
-    Skips validation for safe HTTP methods and endpoints decorated with
-    ``@csrf_exempt``.
+    Use as a per-endpoint dependency on routes that authenticate via cookies::
+
+        @router.post("/refresh", dependencies=[Depends(csrf_protect)])
+        async def refresh_token(...):
+            ...
+
+    Validates that the ``X-CSRF-Token`` header matches the ``csrf_token``
+    cookie using constant-time comparison.
     """
-    if not settings.CSRF_ENABLED:
-        return
-
-    if request.method in _SAFE_METHODS:
-        return
-
-    # Check if the resolved endpoint is exempt.
-    route = request.scope.get("route")
-    if route and getattr(route, "endpoint", None) in _csrf_exempt_endpoints:
-        return
-
     cookie_token = request.cookies.get(settings.CSRF_COOKIE_NAME)
     header_token = request.headers.get(settings.CSRF_HEADER_NAME)
 

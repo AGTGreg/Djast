@@ -1,0 +1,105 @@
+<h2>Admin Panel Layout</h2>
+<p class="subtitle">Sidebar navigation with app → model hierarchy</p>
+
+<div class="mockup">
+  <div class="mockup-header">Djast Admin — /admin/</div>
+  <div class="mockup-body" style="display:flex; min-height:400px; padding:0;">
+    <!-- Sidebar -->
+    <div style="width:220px; background:#1a1a2e; color:#e0e0e0; padding:16px 0; border-right:1px solid #333; flex-shrink:0;">
+      <div style="padding:8px 16px; font-size:13px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:1px;">Apps</div>
+
+      <!-- Auth app -->
+      <div style="margin-top:8px;">
+        <div style="padding:8px 16px; font-size:14px; font-weight:600; color:#7c8cf8; cursor:pointer;">Auth</div>
+        <div style="padding:6px 16px 6px 32px; font-size:13px; color:#fff; background:#2a2a4a; border-left:3px solid #7c8cf8; cursor:pointer;">User</div>
+        <div style="padding:6px 16px 6px 32px; font-size:13px; color:#ccc; cursor:pointer;">Refresh Token</div>
+        <div style="padding:6px 16px 6px 32px; font-size:13px; color:#ccc; cursor:pointer;">Email Address</div>
+        <div style="padding:6px 16px 6px 32px; font-size:13px; color:#ccc; cursor:pointer;">OAuth Account</div>
+      </div>
+
+      <!-- Example second app -->
+      <div style="margin-top:12px;">
+        <div style="padding:8px 16px; font-size:14px; font-weight:600; color:#888; cursor:pointer;">Blog <span style="font-size:11px; color:#555;">(example)</span></div>
+        <div style="padding:6px 16px 6px 32px; font-size:13px; color:#666;">Post</div>
+        <div style="padding:6px 16px 6px 32px; font-size:13px; color:#666;">Category</div>
+      </div>
+    </div>
+
+    <!-- Main content area -->
+    <div style="flex:1; padding:24px; background:#0d0d1a;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+        <div>
+          <span style="color:#888; font-size:13px;">Auth ›</span>
+          <span style="color:#fff; font-size:18px; font-weight:600; margin-left:4px;">User</span>
+        </div>
+        <button style="background:#7c8cf8; color:#fff; border:none; padding:8px 16px; border-radius:4px; font-size:13px; cursor:pointer;">+ Add User</button>
+      </div>
+
+      <!-- Search -->
+      <div style="margin-bottom:16px;">
+        <input style="background:#1a1a2e; border:1px solid #333; color:#ccc; padding:8px 12px; border-radius:4px; width:300px; font-size:13px;" placeholder="Search..." />
+      </div>
+
+      <!-- Table -->
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="border-bottom:1px solid #333; color:#888; text-align:left;">
+            <th style="padding:10px 12px;">ID</th>
+            <th style="padding:10px 12px;">Username</th>
+            <th style="padding:10px 12px;">Email</th>
+            <th style="padding:10px 12px;">Is Active</th>
+            <th style="padding:10px 12px;">Date Joined</th>
+            <th style="padding:10px 12px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #222; color:#ddd;">
+            <td style="padding:10px 12px;">1</td>
+            <td style="padding:10px 12px; color:#7c8cf8;">admin</td>
+            <td style="padding:10px 12px;">admin@example.com</td>
+            <td style="padding:10px 12px;"><span style="color:#4ade80;">●</span> True</td>
+            <td style="padding:10px 12px;">2026-03-10</td>
+            <td style="padding:10px 12px; text-align:right;"><span style="color:#7c8cf8; cursor:pointer;">Edit</span> · <span style="color:#f87171; cursor:pointer;">Delete</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #222; color:#ddd;">
+            <td style="padding:10px 12px;">2</td>
+            <td style="padding:10px 12px; color:#7c8cf8;">greg</td>
+            <td style="padding:10px 12px;">greg@example.com</td>
+            <td style="padding:10px 12px;"><span style="color:#4ade80;">●</span> True</td>
+            <td style="padding:10px 12px;">2026-03-12</td>
+            <td style="padding:10px 12px; text-align:right;"><span style="color:#7c8cf8; cursor:pointer;">Edit</span> · <span style="color:#f87171; cursor:pointer;">Delete</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #222; color:#ddd;">
+            <td style="padding:10px 12px;">3</td>
+            <td style="padding:10px 12px; color:#7c8cf8;">testuser</td>
+            <td style="padding:10px 12px;">test@example.com</td>
+            <td style="padding:10px 12px;"><span style="color:#f87171;">●</span> False</td>
+            <td style="padding:10px 12px;">2026-03-13</td>
+            <td style="padding:10px 12px; text-align:right;"><span style="color:#7c8cf8; cursor:pointer;">Edit</span> · <span style="color:#f87171; cursor:pointer;">Delete</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Pagination -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; color:#888; font-size:13px;">
+        <span>Showing 1-3 of 3</span>
+        <div>
+          <span style="padding:4px 10px; border:1px solid #333; border-radius:3px; margin-right:4px; color:#555;">← Prev</span>
+          <span style="padding:4px 10px; border:1px solid #333; border-radius:3px; color:#555;">Next →</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:24px;">
+  <h3>Key Elements</h3>
+  <ul style="color:#ccc; font-size:14px; line-height:1.8;">
+    <li><strong>Sidebar</strong> — Apps as collapsible sections, models nested underneath</li>
+    <li><strong>Breadcrumb</strong> — App › Model for orientation</li>
+    <li><strong>List view</strong> — All columns from the model, with Edit/Delete actions</li>
+    <li><strong>Routes</strong> — <code style="color:#7c8cf8;">/admin/auth/user/</code>, <code style="color:#7c8cf8;">/admin/auth/user/1/</code></li>
+    <li><strong>Search bar</strong> — Configurable search field(s)</li>
+    <li><strong>Pagination</strong> — Cursor or offset-based</li>
+  </ul>
+</div>

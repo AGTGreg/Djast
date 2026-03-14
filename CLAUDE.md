@@ -114,7 +114,7 @@ Djast/
 - **New apps**: Created via `python manage.py startapp <name>`, then register the router in `djast/urls.py`.
 - **Task queue**: Define tasks in `<app>/tasks.py` using `@broker.task` decorator (import broker from `djast.taskiq`). Enqueue with `.kiq()`. Cron schedules via `schedule=[{"cron": "..."}]` on the decorator. Tests use `InMemoryBroker` via `_reset_broker()`.
 - **Email sending**: Use `send_email()` / `send_template_email()` from `djast.utils.email`. Backends are swappable via `EMAIL_BACKEND` setting. When `EMAIL_USE_TASKIQ=True`, emails are dispatched async via task queue (attachments not supported in this mode).
-- **CSRF protection**: Double-submit cookie pattern on all state-changing authenticated endpoints. Login/refresh set `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header.
+- **CSRF protection**: Opt-in double-submit cookie pattern. Not enforced globally (Bearer token auth is immune to CSRF). Endpoints authenticating via cookies can add `Depends(csrf_protect)`. Login/refresh set `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header.
 
 ## Coding Guidelines
 

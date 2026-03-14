@@ -298,13 +298,6 @@ async def _do_oauth_callback(
             )
 
 
-def _csrf_headers(client: AsyncClient) -> dict[str, str]:
-    """Read the csrf_token cookie from the client jar and return it as header."""
-    csrf = client.cookies.get(settings.CSRF_COOKIE_NAME)
-    if csrf:
-        return {settings.CSRF_HEADER_NAME: csrf}
-    return {}
-
 
 async def _do_oauth_flow(
     client: AsyncClient,
@@ -562,7 +555,7 @@ async def test_unlink_oauth_with_password(oauth_client):
     # This is simpler than mocking the full OAuth flow
     resp = await client.delete(
         f"{_auth_prefix()}/oauth/google/link",
-        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     # No linked account → 404
     assert resp.status_code == 404
@@ -575,7 +568,7 @@ async def test_unlink_unsupported_provider(oauth_client):
 
     resp = await client.delete(
         f"{_auth_prefix()}/oauth/fakeprovider/link",
-        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     assert resp.status_code == 404
 
@@ -591,7 +584,7 @@ async def test_cannot_unlink_only_auth_method(oauth_client):
     # Try to unlink the only auth method
     resp = await client.delete(
         f"{_auth_prefix()}/oauth/google/link",
-        headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
     assert "only authentication method" in resp.json()["detail"].lower()
@@ -613,7 +606,7 @@ async def test_set_password_for_oauth_user(oauth_client):
     resp = await client.post(
         f"{_auth_prefix()}/set-password",
         json={"new_password": _strong_password()},
-        headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
     assert "success" in resp.json()["message"].lower()
@@ -629,7 +622,7 @@ async def test_set_password_rejected_if_already_has_password(oauth_client):
     resp = await client.post(
         f"{_auth_prefix()}/set-password",
         json={"new_password": _strong_password()},
-        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     assert resp.status_code == 400
     assert "already has a password" in resp.json()["detail"].lower()
@@ -650,7 +643,7 @@ async def test_set_password_rejected_if_disabled(oauth_client):
         resp = await client.post(
             f"{_auth_prefix()}/set-password",
             json={"new_password": _strong_password()},
-            headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 403
     finally:
@@ -667,7 +660,7 @@ async def test_set_password_weak_password_rejected(oauth_client):
     resp = await client.post(
         f"{_auth_prefix()}/set-password",
         json={"new_password": "weak"},
-        headers={"Authorization": f"Bearer {token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
 
