@@ -16,7 +16,7 @@ All notable changes to this project will be documented in this file.
 - **Alembic env template**: Fixed `rglob`/`startswith` model discovery bugs (same fixes applied to `shell` command earlier).
 
 ### Security
-- **CSRF protection**: Double-submit cookie pattern for all state-changing authenticated endpoints. Login/refresh set a `csrf_token` cookie; protected endpoints require matching `X-CSRF-Token` header. Configurable via `CSRF_ENABLED`, `CSRF_COOKIE_NAME`, `CSRF_HEADER_NAME`, `CSRF_TOKEN_LENGTH`.
+- **CSRF protection**: Switched from global opt-out (`@csrf_exempt`) to opt-in (`csrf_protect` dependency) pattern. CSRF is no longer enforced on all state-changing endpoints by default — endpoints that authenticate via cookies can opt in by adding `Depends(csrf_protect)`. This is the correct pattern for an API framework using Bearer token auth (immune to CSRF). Removed `CSRF_ENABLED` setting. Cookie/header name and token length remain configurable via `CSRF_COOKIE_NAME`, `CSRF_HEADER_NAME`, `CSRF_TOKEN_LENGTH`.
 - **OAuth authorization code exchange**: OAuth callback no longer exposes tokens in redirect URL. Tokens are stored behind a one-time authorization code (Redis, configurable TTL via `OAUTH_CODE_TTL`). Frontend exchanges the code via `POST /auth/oauth/token`.
 - **Credentials exception factory**: Replace shared mutable `CREDENTIALS_EXCEPTION` singleton with `credentials_exception()` factory to prevent cross-request state leakage.
 - **Token blacklist clock-skew buffer**: Blacklist TTL now includes a 10-second buffer to account for clock skew between servers.

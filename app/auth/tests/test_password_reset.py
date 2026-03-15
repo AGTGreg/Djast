@@ -69,13 +69,6 @@ def _extract_access_token(token_response_json: dict) -> str:
     return token_response_json["access_token"]
 
 
-def _csrf_headers(client: AsyncClient) -> dict[str, str]:
-    """Read the csrf_token cookie from the client jar and return it as a header."""
-    csrf = client.cookies.get(settings.CSRF_COOKIE_NAME)
-    if csrf:
-        return {settings.CSRF_HEADER_NAME: csrf}
-    return {}
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

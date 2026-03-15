@@ -107,23 +107,18 @@ Returns a new access token and rotates the refresh cookie. Old refresh tokens ar
 # Single device
 curl -X POST http://localhost:8000/api/v1/auth/logout \
   -H "Authorization: Bearer eyJ..." \
-  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
-  --cookie "refresh_token=eyJ...; csrf_token=..."
+  --cookie "refresh_token=eyJ..."
 
 # All devices
 curl -X POST http://localhost:8000/api/v1/auth/logout-all \
-  -H "Authorization: Bearer eyJ..." \
-  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
-  --cookie "csrf_token=..."
+  -H "Authorization: Bearer eyJ..."
 ```
 
 **Change password**
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/change-password \
   -H "Authorization: Bearer eyJ..." \
-  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
   -H "Content-Type: application/json" \
-  --cookie "csrf_token=..." \
   -d '{"old_password": "Secret1!xx", "new_password": "NewPass1!yy"}'
 ```
 This revokes all sessions across all devices after changing the password.
@@ -178,9 +173,7 @@ Response (200):
 **Resend verification email**
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/resend-verification \
-  -H "Authorization: Bearer eyJ..." \
-  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
-  --cookie "csrf_token=..."
+  -H "Authorization: Bearer eyJ..."
 ```
 Response (200):
 ```json
@@ -294,7 +287,7 @@ Response (200):
 {"access_token": "eyJ...", "token_type": "bearer", "expires_in": 1800}
 ```
 
-The response also sets the `refresh_token` HTTP-only cookie and `csrf_token` cookie, identical to password-based login. The authorization code is single-use — replaying it returns 400.
+The response also sets the `refresh_token` HTTP-only cookie, identical to password-based login. The authorization code is single-use — replaying it returns 400.
 
 **Account linking:**
 
@@ -309,9 +302,7 @@ Users who signed up via OAuth have no password. They can set one to enable passw
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/set-password \
   -H "Authorization: Bearer eyJ..." \
-  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
   -H "Content-Type: application/json" \
-  --cookie "csrf_token=..." \
   -d '{"new_password": "MyNewPass1!"}'
 ```
 
@@ -321,9 +312,7 @@ This is controlled by `OAUTH_ALLOW_SET_PASSWORD` (default: `true`). Users who al
 
 ```bash
 curl -X DELETE http://localhost:8000/api/v1/auth/oauth/google/link \
-  -H "Authorization: Bearer eyJ..." \
-  -H "X-CSRF-Token: <csrf_token_cookie_value>" \
-  --cookie "csrf_token=..."
+  -H "Authorization: Bearer eyJ..."
 ```
 
 Users cannot unlink their only authentication method. If an OAuth-only user with a single provider tries to unlink, they get a 400. They must either set a password or link another provider first.
@@ -416,17 +405,24 @@ Passwords are hashed with PBKDF2-SHA256 (1,200,000 iterations) and automatically
 
 **Security features**
 
-**CSRF protection** — All state-changing requests (POST, PUT, PATCH, DELETE) are automatically checked via a global CSRF dependency, similar to Django's `CsrfViewMiddleware`. On login and token refresh, the server sets a `csrf_token` cookie (non-HttpOnly, readable by JavaScript). The frontend must read the cookie and send its value in the `X-CSRF-Token` header. The server compares the two using constant-time comparison. Requests without a matching header receive 403. Endpoints that don't need CSRF (signup, login, refresh, OAuth token exchange) are marked with `@csrf_exempt`. CSRF can be disabled globally by setting `CSRF_ENABLED=false`.
+**CSRF protection** — Djast provides opt-in double-submit cookie CSRF protection. Because all authenticated endpoints use Bearer tokens (immune to CSRF), CSRF is not enforced globally and no built-in endpoints use it. Endpoints that authenticate via cookies can opt in by adding `csrf_protect` as a FastAPI dependency. The developer is responsible for setting the `csrf_token` cookie (via `set_csrf_cookie`) when issuing credentials, and the `csrf_protect` dependency validates the `X-CSRF-Token` header against the cookie using constant-time comparison. Requests without a matching header receive 403.
 
-To exempt your own endpoints from CSRF, use the `@csrf_exempt` decorator (place it between `@router` and any other decorators like `@limiter.limit`):
+To protect an endpoint with CSRF:
 
 ```python
-from djast.utils.csrf import csrf_exempt
+from fastapi import Depends, Response
+from djast.utils.csrf import csrf_protect, generate_csrf_token, set_csrf_cookie
 
-@router.post("/my-webhook")
-@csrf_exempt
-@limiter.limit("10/minute")
-async def my_webhook(request: Request):
+# Set CSRF cookie when issuing credentials
+@router.post("/my-login")
+async def my_login(response: Response):
+    # ... authenticate ...
+    set_csrf_cookie(response, generate_csrf_token())
+    return {"token": "..."}
+
+# Require CSRF validation
+@router.post("/my-endpoint", dependencies=[Depends(csrf_protect)])
+async def my_endpoint(request: Request):
     ...
 ```
 
@@ -465,7 +461,6 @@ All settings are in `app/djast/settings.py` and can be overridden via environmen
 | `ACCOUNT_LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration in seconds |
 | `ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN` | `true` | Allow login when Redis lockout check fails |
 | `FALLBACK_IS_BLACKLISTED` | `true` | Treat tokens as blacklisted when Redis is down |
-| `CSRF_ENABLED` | `true` | Enable CSRF double-submit cookie protection |
 | `CSRF_COOKIE_NAME` | `"csrf_token"` | Name of the CSRF cookie |
 | `CSRF_HEADER_NAME` | `"X-CSRF-Token"` | Header name for CSRF token |
 | `CSRF_TOKEN_LENGTH` | `32` | Length of generated CSRF tokens |

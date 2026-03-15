@@ -16,7 +16,7 @@ Security behavior is controlled by the `DEBUG` setting. Set `DEBUG=false` in pro
 | CORS origins | Localhost variants auto-populated | Empty list (must be configured explicitly) |
 | CORS credentials | Allowed | Disabled (unless explicitly enabled) |
 | Database query logging | Enabled (`echo=True`) | Disabled |
-| CSRF cookie | Sent over HTTP | Sent only over HTTPS |
+| CSRF cookie (if used) | Sent over HTTP | Sent only over HTTPS |
 
 **What you must configure for production:**
 
@@ -110,50 +110,52 @@ PASSWORD_VALIDATION_REGEX='^[\x20-\x7E]{12,100}$'
 
 **CSRF protection**
 
-Djast uses the **double-submit cookie** pattern, enforced globally via a FastAPI dependency — similar to Django's `CsrfViewMiddleware`.
+Djast provides **opt-in** double-submit cookie CSRF protection. Because all authenticated endpoints use Bearer tokens (which the browser never auto-attaches), CSRF is not enforced globally — it would be unnecessary overhead. Instead, endpoints that authenticate via cookies (e.g., a refresh-token endpoint) can opt in by adding `csrf_protect` as a FastAPI dependency.
 
 **How it works:**
-1. On login and token refresh, the server sets a `csrf_token` cookie (`httponly=False`, readable by JavaScript).
-2. For every state-changing request (POST, PUT, PATCH, DELETE), the server checks that the `X-CSRF-Token` header matches the cookie value.
-3. Comparison uses `secrets.compare_digest()` (constant-time) to prevent timing attacks.
-4. Mismatched or missing tokens return 403.
+1. Endpoints that declare the `csrf_protect` dependency check that the `X-CSRF-Token` header matches the `csrf_token` cookie value.
+2. Comparison uses `secrets.compare_digest()` (constant-time) to prevent timing attacks.
+3. Mismatched or missing tokens return 403.
 
-**Safe methods** (GET, HEAD, OPTIONS, TRACE) are never checked.
+No built-in auth endpoints currently use `csrf_protect` — they all authenticate via Bearer tokens, which are immune to CSRF. The CSRF utilities (`generate_csrf_token`, `set_csrf_cookie`, `csrf_protect`) are available for developers who add cookie-authenticated endpoints to their apps.
 
-**Exempting endpoints**: Use the `@csrf_exempt` decorator for endpoints that don't need CSRF (e.g., login, signup, webhooks, API endpoints consumed by non-browser clients):
+**Why opt-in, not opt-out?** Djast is an API framework. Bearer token authentication is immune to CSRF because the browser never auto-attaches the `Authorization` header. Global CSRF enforcement (like Django's `CsrfViewMiddleware`) is designed for session-cookie-based auth and would break API endpoints or require every endpoint to be exempted. The opt-in pattern means new endpoints work correctly by default, and developers explicitly protect the few routes that need it.
+
+**Protecting an endpoint**: Add `csrf_protect` as a dependency, and set the CSRF cookie when issuing credentials:
 
 ```python
-from djast.utils.csrf import csrf_exempt
+from fastapi import Depends, Request, Response
+from djast.utils.csrf import csrf_protect, generate_csrf_token, set_csrf_cookie
 
-@router.post("/my-webhook")
-@csrf_exempt
-@limiter.limit("10/minute")
-async def my_webhook(request: Request):
+# Set CSRF cookie when issuing credentials
+@router.post("/my-login")
+async def my_login(response: Response):
+    # ... authenticate user ...
+    set_csrf_cookie(response, generate_csrf_token())
+    return {"token": "..."}
+
+# Require CSRF on protected endpoint
+@router.post("/my-endpoint", dependencies=[Depends(csrf_protect)])
+async def my_endpoint(request: Request):
     ...
 ```
 
-`@csrf_exempt` must be placed between `@router` and any other decorators (like `@limiter.limit`). This ensures the registered route endpoint matches the exempt registry.
-
-**Frontend integration**: After login, read the `csrf_token` cookie and include it as the `X-CSRF-Token` header on all non-GET requests:
+**Frontend integration**: Read the `csrf_token` cookie and include it as the `X-CSRF-Token` header on CSRF-protected requests:
 
 ```javascript
-// Example with fetch
 const csrfToken = document.cookie
   .split('; ')
   .find(row => row.startsWith('csrf_token='))
   ?.split('=')[1];
 
-fetch('/api/v1/auth/logout', {
+fetch('/api/v1/my-endpoint', {
   method: 'POST',
   credentials: 'include',
   headers: {
-    'Authorization': `Bearer ${accessToken}`,
     'X-CSRF-Token': csrfToken,
   },
 });
 ```
-
-**Disabling CSRF**: Set `CSRF_ENABLED=false`. Only recommended for development or API-only backends consumed exclusively by non-browser clients.
 
 ---
 
@@ -262,7 +264,6 @@ All settings are in `app/djast/settings.py`, overridable via environment variabl
 |---------|---------|-------------|
 | `DEBUG` | `true` | Development mode — controls cookies, CORS, logging |
 | `SECRET_KEY` | *(hardcoded dev value)* | JWT signing key. **Must be unique and secret in production** |
-| `CSRF_ENABLED` | `true` | Enable CSRF double-submit cookie protection |
 | `CSRF_COOKIE_NAME` | `"csrf_token"` | Name of the CSRF cookie |
 | `CSRF_HEADER_NAME` | `"X-CSRF-Token"` | Expected header name for CSRF token |
 | `CSRF_TOKEN_LENGTH` | `32` | Byte length of generated CSRF tokens |

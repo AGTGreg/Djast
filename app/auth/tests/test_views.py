@@ -40,13 +40,6 @@ def _extract_access_token(token_response_json: dict) -> str:
     return token_response_json["access_token"]
 
 
-def _csrf_headers(client: AsyncClient) -> dict[str, str]:
-    """Read the csrf_token cookie from the client jar and return it as a header."""
-    csrf = client.cookies.get(settings.CSRF_COOKIE_NAME)
-    if csrf:
-        return {settings.CSRF_HEADER_NAME: csrf}
-    return {}
-
 
 def _auth_prefix() -> str:
     return f"{settings.APP_PREFIX}/auth"
@@ -575,7 +568,7 @@ async def test_change_password_success_and_login_with_new_password(auth_client):
 
     change_resp = await client.post(
         f"{_auth_prefix()}/change-password",
-        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {access_token}"},
         json={"old_password": old_password, "new_password": new_password},
     )
     assert change_resp.status_code == 200, change_resp.text
@@ -609,7 +602,7 @@ async def test_change_password_wrong_old_password_returns_400(auth_client):
 
     change_resp = await client.post(
         f"{_auth_prefix()}/change-password",
-        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {access_token}"},
         json={"old_password": "WrongPassword123!", "new_password": _strong_password("Z")},
     )
     assert change_resp.status_code == 400
@@ -623,7 +616,7 @@ async def test_logout_revoke_blacklists_current_access_token(auth_client):
 
     revoke_resp = await client.post(
         f"{_auth_prefix()}/logout",
-        headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     assert revoke_resp.status_code == 204
 
@@ -676,16 +669,11 @@ async def test_logout_with_stale_refresh_cookie_revokes_replacement_refresh_toke
     assert new_row.revoked_at is None
 
     # Simulate a stale cookie at logout time.
-    # We must include the csrf_token cookie alongside refresh_token because
-    # setting Cookie header explicitly replaces the entire client cookie jar.
-    csrf = _csrf_headers(client)
-    csrf_cookie = client.cookies.get(settings.CSRF_COOKIE_NAME, "")
     revoke_resp = await client.post(
         f"{_auth_prefix()}/logout",
         headers={
             "Authorization": f"Bearer {access_token}",
-            "Cookie": f"refresh_token={old_refresh}; {settings.CSRF_COOKIE_NAME}={csrf_cookie}",
-            **csrf,
+            "Cookie": f"refresh_token={old_refresh}",
         },
     )
     assert revoke_resp.status_code == 204, revoke_resp.text
@@ -803,7 +791,7 @@ async def test_logout_current_device_keeps_other_device_logged_in(auth_client):
         # Device A logs out (revoke current token + refresh token)
         revoke = await device_a.post(
             f"{_auth_prefix()}/logout",
-            headers={"Authorization": f"Bearer {access_a}", **_csrf_headers(device_a)},
+            headers={"Authorization": f"Bearer {access_a}"},
         )
         assert revoke.status_code == 204
 
@@ -861,7 +849,7 @@ async def test_logout_all_devices_revokes_both_devices(auth_client):
         with _patch_time_ahead(seconds=2):
             revoke_all = await device_a.post(
                 f"{_auth_prefix()}/logout-all",
-                headers={"Authorization": f"Bearer {access_a}", **_csrf_headers(device_a)},
+                headers={"Authorization": f"Bearer {access_a}"},
             )
             assert revoke_all.status_code == 204
 
@@ -896,7 +884,7 @@ async def test_logout_all_devices_blacklists_access_token(auth_client):
     with _patch_time_ahead(seconds=2):
         resp = await client.post(
             f"{_auth_prefix()}/logout-all",
-            headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+            headers={"Authorization": f"Bearer {access_token}"},
         )
         assert resp.status_code == 204
 
@@ -924,7 +912,7 @@ async def test_deactivate_account_disables_login_and_token(auth_client):
     with _patch_time_ahead(seconds=2):
         deactivate_resp = await client.post(
             f"{_auth_prefix()}/deactivate",
-            headers={"Authorization": f"Bearer {access_token}", **_csrf_headers(client)},
+            headers={"Authorization": f"Bearer {access_token}"},
         )
         assert deactivate_resp.status_code == 204
 
@@ -974,114 +962,112 @@ async def test_signup_password_length_101_is_rejected(auth_client):
 
 
 # ---------------------------------------------------------------------------
-# Tests: CSRF double-submit cookie protection
+# Tests: CSRF double-submit cookie (opt-in per endpoint)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_csrf_protected_endpoint_rejects_missing_header(auth_client):
-    """CSRF-protected endpoints must return 403 when X-CSRF-Token header is missing."""
+async def test_csrf_protect_rejects_missing_header(auth_client):
+    """csrf_protect dependency must return 403 when X-CSRF-Token header is missing."""
+    from fastapi import Depends, Request
+    from djast.utils.csrf import csrf_protect, generate_csrf_token
+
+    @main.app.post("/test-csrf-missing", dependencies=[Depends(csrf_protect)])
+    async def _csrf_endpoint(request: Request):
+        return {"ok": True}
+
+    try:
+        client, mode = auth_client
+        csrf_token = generate_csrf_token()
+
+        # Send cookie but no header → 403
+        resp = await client.post(
+            "/test-csrf-missing",
+            headers={
+                "Cookie": f"{settings.CSRF_COOKIE_NAME}={csrf_token}",
+            },
+        )
+        assert resp.status_code == 403
+        assert "csrf" in resp.json()["detail"].lower()
+    finally:
+        main.app.routes[:] = [
+            r for r in main.app.routes
+            if getattr(r, "path", None) != "/test-csrf-missing"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_csrf_protect_rejects_wrong_token(auth_client):
+    """csrf_protect dependency must return 403 when header doesn't match cookie."""
+    from fastapi import Depends, Request
+    from djast.utils.csrf import csrf_protect, generate_csrf_token
+
+    @main.app.post("/test-csrf-wrong", dependencies=[Depends(csrf_protect)])
+    async def _csrf_endpoint(request: Request):
+        return {"ok": True}
+
+    try:
+        client, mode = auth_client
+        csrf_token = generate_csrf_token()
+
+        resp = await client.post(
+            "/test-csrf-wrong",
+            headers={
+                "Cookie": f"{settings.CSRF_COOKIE_NAME}={csrf_token}",
+                settings.CSRF_HEADER_NAME: "wrong-csrf-token-value",
+            },
+        )
+        assert resp.status_code == 403
+        assert "csrf" in resp.json()["detail"].lower()
+    finally:
+        main.app.routes[:] = [
+            r for r in main.app.routes
+            if getattr(r, "path", None) != "/test-csrf-wrong"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_csrf_protect_succeeds_with_correct_token(auth_client):
+    """csrf_protect dependency succeeds when header matches cookie."""
+    from fastapi import Depends, Request
+    from djast.utils.csrf import csrf_protect, generate_csrf_token
+
+    @main.app.post("/test-csrf-ok", dependencies=[Depends(csrf_protect)])
+    async def _csrf_endpoint(request: Request):
+        return {"ok": True}
+
+    try:
+        client, mode = auth_client
+        csrf_token = generate_csrf_token()
+
+        resp = await client.post(
+            "/test-csrf-ok",
+            headers={
+                "Cookie": f"{settings.CSRF_COOKIE_NAME}={csrf_token}",
+                settings.CSRF_HEADER_NAME: csrf_token,
+            },
+        )
+        assert resp.status_code == 200
+    finally:
+        main.app.routes[:] = [
+            r for r in main.app.routes
+            if getattr(r, "path", None) != "/test-csrf-ok"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_endpoints_without_csrf_dependency_are_not_checked(auth_client):
+    """Endpoints without csrf_protect dependency should not require CSRF tokens."""
     client, mode = auth_client
     _user_id, access_token = await _signup_and_login(client, mode)
 
-    # change-password without CSRF header should fail
+    # change-password does NOT have csrf_protect dependency, so no CSRF header needed
     resp = await client.post(
         f"{_auth_prefix()}/change-password",
         json={"old_password": _strong_password(), "new_password": _strong_password("new")},
         headers={"Authorization": f"Bearer {access_token}"},
     )
-    assert resp.status_code == 403
-    assert "csrf" in resp.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_csrf_protected_endpoint_rejects_wrong_token(auth_client):
-    """CSRF-protected endpoints must return 403 when header doesn't match cookie."""
-    client, mode = auth_client
-    _user_id, access_token = await _signup_and_login(client, mode)
-
-    resp = await client.post(
-        f"{_auth_prefix()}/change-password",
-        json={"old_password": _strong_password(), "new_password": _strong_password("new")},
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            settings.CSRF_HEADER_NAME: "wrong-csrf-token-value",
-        },
-    )
-    assert resp.status_code == 403
-    assert "csrf" in resp.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_csrf_protected_endpoint_succeeds_with_correct_token(auth_client):
-    """CSRF-protected endpoints succeed when header matches cookie."""
-    client, mode = auth_client
-    _user_id, access_token = await _signup_and_login(client, mode)
-
-    resp = await client.post(
-        f"{_auth_prefix()}/change-password",
-        json={"old_password": _strong_password(), "new_password": _strong_password("new")},
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            **_csrf_headers(client),
-        },
-    )
     assert resp.status_code == 200
 
-
-@pytest.mark.asyncio
-async def test_csrf_bypass_when_disabled(auth_client):
-    """When CSRF_ENABLED=False, CSRF checks should be skipped."""
-    client, mode = auth_client
-    _user_id, access_token = await _signup_and_login(client, mode)
-
-    old_csrf = settings.CSRF_ENABLED
-    settings.CSRF_ENABLED = False
-    try:
-        # No CSRF header, should still succeed
-        resp = await client.post(
-            f"{_auth_prefix()}/change-password",
-            json={"old_password": _strong_password(), "new_password": _strong_password("new")},
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        assert resp.status_code == 200
-    finally:
-        settings.CSRF_ENABLED = old_csrf
-
-
-@pytest.mark.asyncio
-async def test_login_sets_csrf_cookie(auth_client):
-    """Login should set a csrf_token cookie alongside the refresh_token."""
-    client, mode = auth_client
-    password = _strong_password()
-    signup_payload, login_form = _new_user_payload(mode, password=password)
-
-    await client.post(f"{_auth_prefix()}/signup", json=signup_payload)
-    token_resp = await client.post(f"{_auth_prefix()}/token", data=login_form)
-    assert token_resp.status_code == 200
-
-    csrf_cookie = client.cookies.get(settings.CSRF_COOKIE_NAME)
-    assert csrf_cookie, "Login should set a csrf_token cookie"
-    assert len(csrf_cookie) > 0
-
-
-@pytest.mark.asyncio
-async def test_logout_clears_csrf_cookie(auth_client):
-    """Logout should clear the csrf_token cookie."""
-    client, mode = auth_client
-    _user_id, access_token = await _signup_and_login(client, mode)
-
-    assert client.cookies.get(settings.CSRF_COOKIE_NAME), "Should have csrf cookie after login"
-
-    await client.post(
-        f"{_auth_prefix()}/logout",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            **_csrf_headers(client),
-        },
-    )
-    # After logout, csrf_token cookie should be deleted
-    csrf_cookie = client.cookies.get(settings.CSRF_COOKIE_NAME)
-    assert not csrf_cookie, "Logout should clear the csrf_token cookie"
 
 
 # ---------------------------------------------------------------------------

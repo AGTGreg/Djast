@@ -1,11 +1,10 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from djast.settings import settings
 from djast.urls import api_router
-from djast.utils.csrf import csrf_protect
 
 
 @asynccontextmanager
@@ -24,7 +23,6 @@ def create_app() -> FastAPI:
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         debug=settings.DEBUG,
-        dependencies=[Depends(csrf_protect)],
         lifespan=lifespan,
     )
 
