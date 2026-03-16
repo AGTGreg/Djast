@@ -4,7 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`setup_app()` hook**: Auto-discovered app initialization hook. Define `setup_app(app: FastAPI)` in any app's `__init__.py` and it will be called during `create_app()`. No configuration needed — the app factory discovers hooks by scanning app directories. Useful for app-level setup like mounting static files or adding middleware.
+- **`SPAStaticFiles` utility** (`djast/utils/staticfiles.py`): Reusable `StaticFiles` subclass that falls back to `index.html` for SPA client-side routing. Inherits all Starlette `StaticFiles` features: etag/304 support, content-length, MIME type detection, and path traversal protection.
+- **SPA documentation** (`docs/building_an_spa.md`): Developer guide for serving SPAs from Djast app modules, including URL architecture, step-by-step setup, gotchas (no endpoints under SPA prefix, WebSocket/SSE constraints, NGINX production config), and the admin panel as reference implementation.
+- **`createsuperuser` command**: New management command (`python manage.py createsuperuser`) that creates a user with `is_superuser=True` and `is_staff=True`. Prompts for username/email/password based on `AUTH_USER_MODEL_TYPE` setting. Validates password strength and confirms password entry. 10 new tests.
+- **Admin panel**: Django-like admin panel with React frontend served by FastAPI. Self-contained in `admin/` — opt out by deleting the folder and removing the route from `urls.py`. Features:
+  - **Model registry** (`admin/registry.py`): Django-like `admin.site.register(Model, "App")` and `@admin.register(Model)` decorator. SQLAlchemy column introspection for field types, editability, and required status. Supports `list_display`, `search_fields`, `field_options`, and `exclude_fields`.
+  - **Generic CRUD API**: Schema-driven endpoints — `GET /admin/schema/`, list/detail/create/update/delete per model, bulk delete, admin password change for `AbstractBaseUser` subclasses. All endpoints (except `/admin/config/`) require `is_staff` or `is_superuser`.
+  - **React frontend**: Login (adapts to django/email auth mode), sidebar from schema, paginated list with server-side search/sort, detail form with field-level rendering, admin password change (replaces password field for user models), own password change via top-bar menu.
+  - **Zero-config for cloners**: Built `dist/` committed to repo and served by FastAPI at `/admin/`. Works after `git clone` + `docker compose up` — no Node.js or extra servers needed. Vite dev proxy available for frontend development.
+  - **JWT authentication**: Real login via `/auth/token`, session restore via refresh cookie, automatic token refresh on 401.
+  - User model registered under "Auth" by default with password auto-excluded and `has_password_change` flag. 66 new tests (22 registry + 44 views).
+
 ### Improved
+- **Admin SPA self-contained**: The admin SPA mount moved from `main.py` to `admin/__init__.py` via the new `setup_app()` hook. No admin-specific code remains in `main.py`. Opting out requires only deleting `admin/` and removing the router from `urls.py`.
 - **`db/engine.py`**: Removed dead `future=True` parameter from `SqliteConfig` and `PostgresConfig` engine options (no-op in SQLAlchemy 2.0+).
 - **`db/models.py`**: `Manager.exists()` now uses `SELECT EXISTS(...)` subquery instead of fetching the full row. Removed redundant local `func` import in `count()` (uses module-level import). Added type hints to `Model.objects()` (`session: AsyncSession`, return `Manager[Self]`).
 - **`startapp` command**: Validates module names are valid Python identifiers (rejects `my-app`, `class`, `123app`, etc.). Replaces interactive retry loop with simple error on name collision (standard CLI behavior). Removes redundant `__init__.py` creation logic.
@@ -16,6 +30,7 @@ All notable changes to this project will be documented in this file.
 - **Alembic env template**: Fixed `rglob`/`startswith` model discovery bugs (same fixes applied to `shell` command earlier).
 
 ### Security
+- **Fix path traversal vulnerability in admin SPA serving**: The previous `FileResponse(admin_dist / path)` approach did not sanitise percent-encoded path components (`..%2F`). Replaced with Starlette's `StaticFiles` which validates all resolved paths against the configured directory root.
 - **CSRF protection**: Switched from global opt-out (`@csrf_exempt`) to opt-in (`csrf_protect` dependency) pattern. CSRF is no longer enforced on all state-changing endpoints by default — endpoints that authenticate via cookies can opt in by adding `Depends(csrf_protect)`. This is the correct pattern for an API framework using Bearer token auth (immune to CSRF). Removed `CSRF_ENABLED` setting. Cookie/header name and token length remain configurable via `CSRF_COOKIE_NAME`, `CSRF_HEADER_NAME`, `CSRF_TOKEN_LENGTH`.
 - **OAuth authorization code exchange**: OAuth callback no longer exposes tokens in redirect URL. Tokens are stored behind a one-time authorization code (Redis, configurable TTL via `OAUTH_CODE_TTL`). Frontend exchanges the code via `POST /auth/oauth/token`.
 - **Credentials exception factory**: Replace shared mutable `CREDENTIALS_EXCEPTION` singleton with `credentials_exception()` factory to prevent cross-request state leakage.
@@ -51,6 +66,7 @@ All notable changes to this project will be documented in this file.
 - `expires_in` field in token responses (login, refresh) per OAuth 2.0 RFC 6749 §5.1. Returns access token lifetime in seconds.
 
 ### Changed
+- Moved `is_staff` and `is_superuser` to `AbstractBaseUser` so both user types inherit these fields.
 - Rename `/revoke` → `/logout`, `/revoke-all` → `/logout-all` for standard JWT library compatibility.
 - Remove trailing slash from `/users/me/` → `/users/me`.
 

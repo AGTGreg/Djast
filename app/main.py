@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from djast.settings import settings
 from djast.urls import api_router
+from djast.utils.discovery import discover_setup_hooks
 
 
 @asynccontextmanager
@@ -40,6 +41,10 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_router, prefix=settings.APP_PREFIX)
+
+    # Auto-discover and run setup_app() hooks from app modules.
+    for hook in discover_setup_hooks():
+        hook(app)
 
     return app
 

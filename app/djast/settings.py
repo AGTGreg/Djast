@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "csrf_token"
     CSRF_HEADER_NAME: str = "X-CSRF-Token"
     CSRF_TOKEN_LENGTH: int = 32
+
     # Email Verification: "mandatory" | "optional" | "none"
     # "mandatory" — user cannot log in until primary email is verified
     # "optional" — verification email sent but login allowed without it

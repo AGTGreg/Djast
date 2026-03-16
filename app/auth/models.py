@@ -35,6 +35,9 @@ class AbstractBaseUser(models.Model):
     __abstract__ = True
 
     is_active: Mapped[bool] = mapped_column(default=True)
+    is_staff: Mapped[bool] = mapped_column(default=False)
+    is_superuser: Mapped[bool] = mapped_column(default=False)
+
     password: Mapped[str] = mapped_column(String(255))
     date_joined: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -187,8 +190,6 @@ class AbstractDjangoUser(AbstractBaseUser):
     email: Mapped[str] = mapped_column(String(254), default="")
     first_name: Mapped[str] = mapped_column(String(150), default="")
     last_name: Mapped[str] = mapped_column(String(150), default="")
-    is_staff: Mapped[bool] = mapped_column(default=False)
-    is_superuser: Mapped[bool] = mapped_column(default=False)
 
     def __repr__(self) -> str:
         return f"<User(username={self.username})>"
