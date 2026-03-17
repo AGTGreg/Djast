@@ -8,6 +8,7 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import clear_mappers
 
+import auth.forms
 import auth.models
 import auth.views
 import auth.schemas
@@ -138,6 +139,7 @@ async def auth_client(request, db_engine, db_session):
     clear_mappers()
     Base.metadata.clear()
 
+    importlib.reload(auth.forms)
     importlib.reload(auth.models)
     importlib.reload(auth.schemas)
     importlib.reload(auth.utils.auth_backend)
@@ -166,6 +168,7 @@ async def auth_client(request, db_engine, db_session):
     settings.AUTH_USER_MODEL_TYPE = "django"
     clear_mappers()
     Base.metadata.clear()
+    importlib.reload(auth.forms)
     importlib.reload(auth.models)
 
 

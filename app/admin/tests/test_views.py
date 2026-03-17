@@ -137,6 +137,7 @@ async def admin_client(request, db_engine):
     from djast.rate_limit import limiter
     limiter.enabled = False
 
+    import auth.forms
     import auth.models
     import auth.schemas
     import auth.utils.auth_backend
@@ -150,6 +151,7 @@ async def admin_client(request, db_engine):
     clear_mappers()
     Base.metadata.clear()
 
+    importlib.reload(auth.forms)
     importlib.reload(auth.models)
     importlib.reload(auth.schemas)
     importlib.reload(auth.utils.auth_backend)
@@ -191,6 +193,7 @@ async def admin_client(request, db_engine):
     settings.AUTH_USER_MODEL_TYPE = "django"
     clear_mappers()
     Base.metadata.clear()
+    importlib.reload(auth.forms)
     importlib.reload(auth.models)
     importlib.reload(admin.registry)
     importlib.reload(admin.views)

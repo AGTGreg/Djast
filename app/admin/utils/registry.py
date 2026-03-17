@@ -241,9 +241,11 @@ class AdminSite:
         for app_name, models in self._registry.items():
             models_schema: dict[str, dict] = {}
             for model_name, entry in models.items():
+                ld = entry.admin_config.list_display
                 models_schema[model_name] = {
                     "label": model_name,
                     "has_password_change": entry.is_user_model,
+                    "list_display": list(ld) if ld else None,
                     "fields": [
                         {
                             "name": f.name,

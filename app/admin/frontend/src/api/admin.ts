@@ -36,6 +36,7 @@ export interface SchemaField {
 export interface ModelSchema {
   label: string;
   has_password_change: boolean;
+  list_display: string[] | null;
   fields: SchemaField[];
 }
 

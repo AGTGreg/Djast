@@ -1,9 +1,13 @@
 """Integration tests for admin SPA serving via setup_app() hook."""
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from main import create_app
+
+DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 @pytest_asyncio.fixture
@@ -46,14 +50,20 @@ async def test_admin_spa_favicon(client):
 @pytest.mark.asyncio
 async def test_admin_spa_js_asset(client):
     """JS bundles in assets/ are served."""
-    resp = await client.get("/admin/assets/index-CkeRXl7g.js")
+    js_files = list((DIST_DIR / "assets").glob("*.js"))
+    assert js_files, "No JS bundle found in dist/assets/"
+    filename = js_files[0].name
+    resp = await client.get(f"/admin/assets/{filename}")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_admin_spa_css_asset(client):
     """CSS bundles in assets/ are served."""
-    resp = await client.get("/admin/assets/index-DA3DO9Tp.css")
+    css_files = list((DIST_DIR / "assets").glob("*.css"))
+    assert css_files, "No CSS bundle found in dist/assets/"
+    filename = css_files[0].name
+    resp = await client.get(f"/admin/assets/{filename}")
     assert resp.status_code == 200
 
 

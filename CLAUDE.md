@@ -168,7 +168,7 @@ This is a framework — all code must be async, performant, secure, easy for dev
 
 ### Before Starting
 
-- Consult `CHANGELOG.md` in the project root to understand what has already been built and changed. This avoids duplicating work or conflicting with recent changes.
+- **Read `CHANGELOG.md`** before making changes. It tracks what has been built, changed, and fixed — grouped by commit date (newest first). Search it by feature name, file path, setting name, or endpoint path to find relevant history. Grep for `Added:`, `Fixed:`, `Security:`, `Improved:`, `Changed:`, or `Refactored:` to filter by change type.
 - Read existing code in the affected modules before modifying them.
 
 ### Build & Validate
@@ -188,7 +188,11 @@ This is a framework — all code must be async, performant, secure, easy for dev
 
 ### After Completing
 
-- Add an entry to `CHANGELOG.md` describing what was added, changed, or fixed.
+- **Update `CHANGELOG.md`**. Add entries under the current date heading (`## DD-MM-YY`). If today's heading doesn't exist, create it above all existing entries. Each entry follows this format:
+  ```
+   - **{Prefix}: {Short title}**: {Description with relevant setting names, file paths, endpoints.}
+  ```
+  Prefixes: `Added`, `Improved`, `Fixed`, `Security`, `Security Fix`, `Changed`, `Refactored`. Pick the one that fits — `Added` for new features, `Improved` for enhancements, `Fixed` for bugs, `Security` for hardening, `Security Fix` for vulnerabilities, `Changed` for behavioral changes, `Refactored` for structural changes. Include setting names, file paths, and endpoint paths in descriptions so they're grep-searchable.
 - Confirm the full test suite still passes before considering the work done.
 
 ## Testing

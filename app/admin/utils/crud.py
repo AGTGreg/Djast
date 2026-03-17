@@ -44,14 +44,15 @@ async def list_records(
 
     base = select(model)
 
-    # Search
+    # Search — escape LIKE wildcards so user input is treated literally.
     if search and entry.search_field_names:
-        term = f"%{search}%"
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        term = f"%{escaped}%"
         conditions = []
         for fname in entry.search_field_names:
             col = getattr(model, fname, None)
             if col is not None:
-                conditions.append(col.ilike(term))
+                conditions.append(col.ilike(term, escape="\\"))
         if conditions:
             base = base.where(or_(*conditions))
 

@@ -9,6 +9,7 @@ export interface FieldConfig {
 export interface ModelConfig {
   label: string;
   has_password_change: boolean;
+  list_display: string[] | null;
   fields: FieldConfig[];
 }
 

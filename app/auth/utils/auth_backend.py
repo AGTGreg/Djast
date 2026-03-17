@@ -534,7 +534,7 @@ async def authenticate_user(
     session: AsyncSession,
     username: str,
     password: str
-) -> Tuple[str, str]:
+) -> Tuple[str, str, "User"]:
     """ Authenticates a user and creates access and refresh tokens.
 
     Args:
@@ -548,7 +548,7 @@ async def authenticate_user(
         auth_exceptions.InvalidCredentials: Raised when the provided credentials are invalid.
 
     Returns:
-        Tuple[str, str]: A tuple containing the access token and refresh token.
+        Tuple[str, str, User]: Access token, refresh token, and authenticated user.
     """
     # Defense-in-depth: reject oversized passwords before expensive hashing.
     # OAuth2PasswordRequestForm (used in django mode) doesn't support max_length.
@@ -599,7 +599,7 @@ async def authenticate_user(
         expires_at=_dt_from_ts(refresh_token_data.exp),
     )
 
-    return access_token, refresh_token
+    return access_token, refresh_token, user
 
 
 async def logout_user(

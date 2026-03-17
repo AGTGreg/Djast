@@ -14,7 +14,7 @@ Extended:
         search_fields = ("name",)
 """
 from admin.utils.registry import AdminSite, ModelAdmin  # noqa: F401
-from auth.models import User
+from auth.models import User, RefreshToken, EmailAddress, OAuthAccount
 from djast.settings import settings
 
 # ---------------------------------------------------------------------------
@@ -54,3 +54,8 @@ class UserAdmin(ModelAdmin):
         if settings.AUTH_USER_MODEL_TYPE == "django"
         else ("id", "email", "is_active", "is_staff", "date_joined")
     )
+
+
+site.register(RefreshToken, "Auth")
+site.register(EmailAddress, "Auth")
+site.register(OAuthAccount, "Auth")

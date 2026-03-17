@@ -25,6 +25,7 @@ export default function ListScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [bulkDropdownOpen, setBulkDropdownOpen] = useState(false);
+  const bulkDropdownRef = useRef<HTMLDivElement>(null);
 
   const [data, setData] = useState<RecordData[]>([]);
   const [totalRecords, setTotalRecords] = useState(0);
@@ -32,7 +33,11 @@ export default function ListScreen() {
   const [loading, setLoading] = useState(true);
 
   const config = getModelConfig(app, model);
-  const fields = config?.fields ?? [];
+  const allFields = config?.fields ?? [];
+  const listDisplay = config?.list_display;
+  const fields = listDisplay
+    ? allFields.filter(f => listDisplay.includes(f.name))
+    : allFields;
 
   // Debounced search
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -45,6 +50,18 @@ export default function ListScreen() {
     }, 300);
     return () => clearTimeout(searchTimerRef.current);
   }, [searchQuery]);
+
+  // Close bulk dropdown on outside click
+  useEffect(() => {
+    if (!bulkDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (bulkDropdownRef.current && !bulkDropdownRef.current.contains(e.target as Node)) {
+        setBulkDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [bulkDropdownOpen]);
 
   // Fetch data from server
   const loadData = useCallback(async () => {
@@ -132,7 +149,7 @@ export default function ListScreen() {
           <h2 className="text-2xl font-bold">{model} List</h2>
           <div className="flex items-center gap-3">
             {selectedRows.size > 0 && (
-              <div className="relative">
+              <div className="relative" ref={bulkDropdownRef}>
                 <button
                   className="btn-secondary text-sm"
                   onClick={() => setBulkDropdownOpen(!bulkDropdownOpen)}

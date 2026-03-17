@@ -17,6 +17,7 @@ class FieldSchema(BaseModel):
 class ModelSchema(BaseModel):
     label: str
     has_password_change: bool
+    list_display: list[str] | None = None
     fields: list[FieldSchema]
 
 

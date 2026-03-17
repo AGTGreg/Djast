@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from djast.database import get_async_session
@@ -37,16 +38,10 @@ from auth.exceptions import PasswordIsWeak
 from auth.models import User
 from auth.schemas import AccessToken
 from auth.utils.auth_backend import authenticate_user, set_refresh_cookie
-from auth.forms import OAuth2EmailRequestForm
+from auth.forms import LoginForm
 from auth import exceptions as auth_exceptions
 
-from fastapi.security import OAuth2PasswordRequestForm
-
 router = APIRouter()
-
-AdminLoginForm = OAuth2PasswordRequestForm
-if settings.AUTH_USER_MODEL_TYPE == "email":
-    AdminLoginForm = OAuth2EmailRequestForm
 
 
 # ---------------------------------------------------------------------------
@@ -76,34 +71,21 @@ async def admin_config() -> AdminConfigResponse:
 async def admin_login(
     request: Request,
     response: Response,
-    form_data: Annotated[AdminLoginForm, Depends()],
+    form_data: Annotated[LoginForm, Depends()],
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> AccessToken:
     """Authenticate and verify admin (is_staff or is_superuser) status.
 
     Uses the same auth backend as /auth/token but rejects non-admin users
-    with 403 before issuing tokens.
+    with 403 after credential validation.  The staff check runs AFTER
+    authenticate_user so that non-staff users with wrong passwords still
+    get 401 (not 403) and timing is identical for all outcomes.
     """
     try:
-        user = await User.objects(session).get(
-            **{User.USERNAME_FIELD: form_data.username},
-        )
-        if user and not (user.is_staff or user.is_superuser):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required.",
-            )
-
-        access_token, refresh_token = await authenticate_user(
+        access_token, refresh_token, user = await authenticate_user(
             session=session,
             username=form_data.username,
             password=form_data.password,
-        )
-        set_refresh_cookie(response, refresh_token)
-        return AccessToken(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
     except auth_exceptions.EmailNotVerified:
         raise HTTPException(
@@ -121,6 +103,20 @@ async def admin_login(
         auth_exceptions.InvalidCredentials,
     ):
         raise auth_exceptions.credentials_exception()
+
+    # Credentials are valid — now check admin privilege.
+    if not (user.is_staff or user.is_superuser):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+
+    set_refresh_cookie(response, refresh_token)
+    return AccessToken(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +181,11 @@ async def admin_create(
         return await create_record(session, entry, body)
     except PasswordIsWeak as e:
         raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(400, str(e))
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A record with the given values already exists.",
+        )
 
 
 @router.patch("/{app}/{model}/{record_id}/")
