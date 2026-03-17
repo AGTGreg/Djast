@@ -368,6 +368,20 @@ async def test_list_ordering(admin_client):
 
 
 @pytest.mark.asyncio
+async def test_list_ordering_ignores_excluded_fields(admin_client):
+    """Ordering by an excluded field (e.g. password) is silently ignored."""
+    client, mode = admin_client
+    _, token = await _create_admin_user(client, mode)
+    resp = await client.get(
+        f"{_admin_prefix()}/Auth/User/?ordering=password",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # Should succeed (200) and not crash — password ordering is silently ignored.
+    assert resp.status_code == 200
+    assert resp.json()["count"] >= 1
+
+
+@pytest.mark.asyncio
 async def test_list_404_for_unknown_model(admin_client):
     client, mode = admin_client
     _, token = await _create_admin_user(client, mode)
@@ -453,6 +467,26 @@ async def test_create_with_weak_password(admin_client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_user_without_password_returns_400(admin_client):
+    """Creating a user model without a password must fail with 400."""
+    client, mode = admin_client
+    _, token = await _create_admin_user(client, mode)
+
+    if mode == "django":
+        payload = {"username": "nopwuser"}
+    else:
+        payload = {"email": "nopw@example.com"}
+
+    resp = await client.post(
+        f"{_admin_prefix()}/Auth/User/",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+    assert "password" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

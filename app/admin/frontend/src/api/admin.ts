@@ -35,8 +35,10 @@ export interface SchemaField {
 
 export interface ModelSchema {
   label: string;
+  pk_field: string;
   has_password_change: boolean;
   list_display: string[] | null;
+  search_fields: string[] | null;
   fields: SchemaField[];
 }
 
@@ -165,7 +167,7 @@ export async function deleteRecord(
 export async function bulkDeleteRecords(
   app: string,
   model: string,
-  ids: number[],
+  ids: (string | number)[],
 ): Promise<{ deleted: number }> {
   return api.post(`/admin/${app}/${model}/bulk-delete/`, { ids });
 }

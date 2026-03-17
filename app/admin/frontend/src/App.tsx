@@ -17,10 +17,10 @@ function ListScreenKeyed() {
 }
 
 function AppRoutes() {
-  const { isLoggedIn, loading } = useAuth();
-  const { getDefaultRoute } = useSchema();
+  const { isLoggedIn, loading: authLoading, logout } = useAuth();
+  const { apps, loading: schemaLoading, error: schemaError, getDefaultRoute } = useSchema();
 
-  if (loading) {
+  if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Spinner />
@@ -30,6 +30,27 @@ function AppRoutes() {
 
   if (!isLoggedIn) {
     return <LoginScreen />;
+  }
+
+  if (schemaLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (schemaError || !apps) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-500 mb-4">{schemaError || 'Unable to load admin configuration.'}</p>
+          <button className="btn-secondary" onClick={logout}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

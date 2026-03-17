@@ -7,9 +7,10 @@ import {
   updateRecord,
   deleteRecord,
   adminSetPassword,
+  type SchemaField,
 } from '../../api/admin';
 import { useSchema } from '../../context/SchemaContext';
-import type { FieldConfig, RecordData } from '../../data/types';
+import type { RecordData } from '../../data/types';
 import { useToast } from '../../context/ToastContext';
 import { useModal } from '../../context/ModalContext';
 import TopBar from '../layout/TopBar';
@@ -27,6 +28,7 @@ export default function DetailScreen() {
   const isNew = id === 'new';
   const config = getModelConfig(app, model);
   const fields = config?.fields ?? [];
+  const pkField = config?.pk_field ?? 'id';
   const hasPasswordChange = config?.has_password_change ?? false;
 
   const [record, setRecord] = useState<RecordData | null>(null);
@@ -83,15 +85,17 @@ export default function DetailScreen() {
     if (!formRef.current) return values;
 
     fields.forEach(field => {
-      if (field.name === 'id' || !field.editable) return;
+      if (field.name === pkField || !field.editable) return;
       const input = formRef.current!.querySelector(`[data-field="${field.name}"]`) as HTMLInputElement | HTMLSelectElement | null;
       if (!input) return;
       if (field.type === 'boolean') {
         values[field.name] = (input as HTMLInputElement).checked;
       } else if (field.type === 'integer' && field.editable) {
-        values[field.name] = parseInt(input.value, 10) || 0;
+        const trimmed = input.value.trim();
+        values[field.name] = trimmed === '' ? null : parseInt(trimmed, 10);
       } else if (field.type === 'decimal' && field.editable) {
-        values[field.name] = parseFloat(input.value) || 0;
+        const trimmed = input.value.trim();
+        values[field.name] = trimmed === '' ? null : parseFloat(trimmed);
       } else {
         values[field.name] = input.value;
       }
@@ -117,7 +121,7 @@ export default function DetailScreen() {
         showToast(`${model} created successfully`, 'success');
       } else {
         await updateRecord(app, model, id!, values);
-        showToast(`${model} #${record?.id} saved`, 'success');
+        showToast(`${model} #${record?.[pkField]} saved`, 'success');
       }
       navigate(`/${app}/${model}`);
     } catch (err: any) {
@@ -132,8 +136,8 @@ export default function DetailScreen() {
     if (!record) return;
     openDeleteModal(1, async () => {
       try {
-        await deleteRecord(app, model, record.id as number);
-        showToast(`${model} #${record.id} deleted`, 'success');
+        await deleteRecord(app, model, record[pkField] as string | number);
+        showToast(`${model} #${record[pkField]} deleted`, 'success');
         navigate(`/${app}/${model}`);
       } catch (err: any) {
         showToast(err.message || 'Delete failed', 'error');
@@ -171,7 +175,7 @@ export default function DetailScreen() {
         onHamburgerClick={onHamburgerClick}
         isDetailView
         isNewRecord={isNew}
-        recordId={record?.id as number}
+        recordId={record?.[pkField] as string | number}
       />
       <main className="flex-1 p-4 lg:p-8">
         {/* Header */}
@@ -181,7 +185,7 @@ export default function DetailScreen() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <h2 className="text-2xl font-bold">
-              {isNew ? `Add ${model}` : `${model} #${record?.id}`}
+              {isNew ? `Add ${model}` : `${model} #${record?.[pkField]}`}
             </h2>
           </div>
           <div className="flex items-center gap-3">
@@ -307,7 +311,7 @@ export default function DetailScreen() {
 }
 
 // ─── Form row ────────────────────────────────────────────────
-function FormRow({ field, value, isNew }: { field: FieldConfig; value: unknown; isNew: boolean }) {
+function FormRow({ field, value, isNew }: { field: SchemaField; value: unknown; isNew: boolean }) {
   const label = field.name.replace(/_/g, ' ');
 
   return (
@@ -323,7 +327,7 @@ function FormRow({ field, value, isNew }: { field: FieldConfig; value: unknown; 
 }
 
 // ─── Field input renderer ────────────────────────────────────
-function FieldInput({ field, value, isNew }: { field: FieldConfig; value: unknown; isNew: boolean }) {
+function FieldInput({ field, value, isNew }: { field: SchemaField; value: unknown; isNew: boolean }) {
   if (field.type === 'select') {
     return (
       <select
@@ -360,7 +364,7 @@ function FieldInput({ field, value, isNew }: { field: FieldConfig; value: unknow
 }
 
 // ─── Boolean field with label toggle ─────────────────────────
-function BooleanField({ field, initialValue }: { field: FieldConfig; initialValue: boolean }) {
+function BooleanField({ field, initialValue }: { field: SchemaField; initialValue: boolean }) {
   const [checked, setChecked] = useState(initialValue);
 
   return (

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FieldSchema(BaseModel):
@@ -16,8 +16,10 @@ class FieldSchema(BaseModel):
 
 class ModelSchema(BaseModel):
     label: str
+    pk_field: str
     has_password_change: bool
     list_display: list[str] | None = None
+    search_fields: list[str] | None = None
     fields: list[FieldSchema]
 
 
@@ -43,7 +45,7 @@ class PaginatedResponse(BaseModel):
 
 
 class BulkDeleteRequest(BaseModel):
-    ids: list[int]
+    ids: list[int | str] = Field(max_length=500)
 
 
 class BulkDeleteResponse(BaseModel):

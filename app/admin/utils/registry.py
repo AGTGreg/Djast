@@ -6,6 +6,7 @@ and the decorator API for registering models with the admin panel.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,8 +36,8 @@ class ModelAdmin:
     app_name: str = ""
     list_display: tuple[str, ...] | None = None
     search_fields: tuple[str, ...] | None = None
-    field_options: dict[str, list[str]] = {}
-    exclude_fields: set[str] = set()
+    field_options: dict[str, list[str]] | None = None
+    exclude_fields: set[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +49,7 @@ class ModelAdminEntry:
     """Internal registry entry for a registered model."""
     model_class: type
     admin_config: ModelAdmin
+    pk_field_names: tuple[str, ...] = ()
     fields: list[FieldMeta] = field(default_factory=list)
     search_field_names: list[str] = field(default_factory=list)
     is_user_model: bool = False
@@ -70,7 +72,7 @@ def _resolve_field_type(
     admin_config: ModelAdmin,
 ) -> str:
     """Map a SQLAlchemy column to an admin field type string."""
-    if column.name in admin_config.field_options:
+    if admin_config.field_options and column.name in admin_config.field_options:
         return "select"
 
     try:
@@ -113,6 +115,15 @@ def _is_required(column: Any) -> bool:
     return True
 
 
+def _get_pk_names(model_class: type) -> tuple[str, ...]:
+    """Return primary-key column names for a model.
+
+    Works with single, renamed, and composite primary keys.
+    """
+    mapper = sa_inspect(model_class)
+    return tuple(col.name for col in mapper.primary_key)
+
+
 def _introspect_fields(
     model_class: type,
     admin_config: ModelAdmin,
@@ -130,7 +141,7 @@ def _introspect_fields(
             type=_resolve_field_type(column, admin_config),
             editable=_is_editable(column),
             required=_is_required(column),
-            options=admin_config.field_options.get(column.name),
+            options=(admin_config.field_options or {}).get(column.name),
         ))
 
     return fields
@@ -150,20 +161,39 @@ class AdminSite:
     def register(
         self,
         model_class: type,
-        app_name: str,
+        app_name: str | None = None,
         admin_class: type[ModelAdmin] | None = None,
-    ) -> None:
-        """Register a model for the admin panel (zero-config mode).
+    ) -> Callable[[type[ModelAdmin]], type[ModelAdmin]] | None:
+        """Register a model for the admin panel.
+
+        Can be used as a direct call (zero-config) or as a decorator:
+
+            # Zero-config:
+            site.register(MyModel, "MyApp")
+
+            # Decorator:
+            @site.register(MyModel)
+            class MyModelAdmin(ModelAdmin):
+                app_name = "MyApp"
+                list_display = ("id", "name")
 
         Args:
             model_class: The SQLAlchemy model class.
-            app_name: Display name for the app grouping.
-            admin_class: Optional ModelAdmin subclass with configuration.
+            app_name: Display name for the app grouping (zero-config mode).
+            admin_class: Optional ModelAdmin subclass (zero-config mode).
         """
-        config = admin_class() if admin_class else ModelAdmin()
-        config.app_name = app_name
+        if app_name is not None:
+            config = admin_class() if admin_class else ModelAdmin()
+            config.app_name = app_name
+            self._register_entry(model_class, config)
+            return None
 
-        self._register_entry(model_class, config)
+        def decorator(cls: type[ModelAdmin]) -> type[ModelAdmin]:
+            config = cls()
+            self._register_entry(model_class, config)
+            return cls
+
+        return decorator
 
     def _register_entry(
         self,
@@ -180,6 +210,13 @@ class AdminSite:
 
         fields = _introspect_fields(model_class, config)
 
+        # Default list_display to primary key columns (filtered by visible fields).
+        if config.list_display is None:
+            visible = {f.name for f in fields}
+            config.list_display = tuple(
+                n for n in _get_pk_names(model_class) if n in visible
+            )
+
         search_field_names: list[str] = []
         if config.search_fields:
             field_names = {f.name for f in fields}
@@ -190,6 +227,7 @@ class AdminSite:
         entry = ModelAdminEntry(
             model_class=model_class,
             admin_config=config,
+            pk_field_names=_get_pk_names(model_class),
             fields=fields,
             search_field_names=search_field_names,
             is_user_model=is_user,
@@ -220,6 +258,7 @@ class AdminSite:
                             "ModelName": {
                                 "label": "ModelName",
                                 "has_password_change": bool,
+                                "search_fields": list | null,
                                 "fields": [
                                     {
                                         "name": str,
@@ -244,8 +283,10 @@ class AdminSite:
                 ld = entry.admin_config.list_display
                 models_schema[model_name] = {
                     "label": model_name,
+                    "pk_field": entry.pk_field_names[0],
                     "has_password_change": entry.is_user_model,
                     "list_display": list(ld) if ld else None,
+                    "search_fields": entry.search_field_names or None,
                     "fields": [
                         {
                             "name": f.name,

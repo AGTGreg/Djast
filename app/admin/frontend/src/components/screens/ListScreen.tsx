@@ -23,7 +23,7 @@ export default function ListScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [ordering, setOrdering] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [selectedRows, setSelectedRows] = useState<Set<string | number>>(new Set());
   const [bulkDropdownOpen, setBulkDropdownOpen] = useState(false);
   const bulkDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -34,10 +34,22 @@ export default function ListScreen() {
 
   const config = getModelConfig(app, model);
   const allFields = config?.fields ?? [];
+  const pkField = config?.pk_field ?? 'id';
   const listDisplay = config?.list_display;
+  const searchFields = config?.search_fields;
+  const hasSearch = searchFields != null && searchFields.length > 0;
   const fields = listDisplay
     ? allFields.filter(f => listDisplay.includes(f.name))
     : allFields;
+
+  // Reset state when navigating between models
+  useEffect(() => {
+    setSearchQuery('');
+    setDebouncedSearch('');
+    setOrdering(null);
+    setCurrentPage(1);
+    setSelectedRows(new Set());
+  }, [app, model]);
 
   // Debounced search
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -95,11 +107,11 @@ export default function ListScreen() {
     });
   }, []);
 
-  const toggleRow = useCallback((id: number) => {
+  const toggleRow = useCallback((pk: string | number) => {
     setSelectedRows(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(pk)) next.delete(pk);
+      else next.add(pk);
       return next;
     });
   }, []);
@@ -108,7 +120,7 @@ export default function ListScreen() {
     setSelectedRows(prev => {
       const next = new Set(prev);
       data.forEach(row => {
-        const id = row.id as number;
+        const id = row[pkField] as string | number;
         if (checked) next.add(id);
         else next.delete(id);
       });
@@ -132,10 +144,10 @@ export default function ListScreen() {
   };
 
   const handleRowClick = (row: RecordData) => {
-    navigate(`/${app}/${model}/${row.id}`);
+    navigate(`/${app}/${model}/${row[pkField]}`);
   };
 
-  const allPageSelected = data.length > 0 && data.every(r => selectedRows.has(r.id as number));
+  const allPageSelected = data.length > 0 && data.every(r => selectedRows.has(r[pkField] as string | number));
 
   const sortField = ordering?.replace(/^-/, '') ?? null;
   const sortDir = ordering?.startsWith('-') ? 'desc' : 'asc';
@@ -180,21 +192,23 @@ export default function ListScreen() {
           </div>
         </div>
 
-        {/* Search */}
-        <div className="mb-4">
-          <div className="relative">
-            <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">
-              <Search className="w-4 h-4" />
-            </span>
-            <input
-              type="text"
-              className="form-field form-field-icon"
-              placeholder="Search records..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
+        {/* Search — only shown when model has search_fields configured */}
+        {hasSearch && (
+          <div className="mb-4">
+            <div className="relative">
+              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">
+                <Search className="w-4 h-4" />
+              </span>
+              <input
+                type="text"
+                className="form-field form-field-icon"
+                placeholder="Search records..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Table card */}
         <div className="card overflow-hidden">
@@ -235,7 +249,7 @@ export default function ListScreen() {
                   <tbody>
                     {data.map(row => (
                       <tr
-                        key={row.id as number}
+                        key={row[pkField] as string | number}
                         className="table-row cursor-pointer"
                         onClick={() => handleRowClick(row)}
                       >
@@ -243,9 +257,9 @@ export default function ListScreen() {
                           <input
                             type="checkbox"
                             className="w-4 h-4 rounded cursor-pointer accent-brand-green"
-                            checked={selectedRows.has(row.id as number)}
+                            checked={selectedRows.has(row[pkField] as string | number)}
                             onClick={e => e.stopPropagation()}
-                            onChange={() => toggleRow(row.id as number)}
+                            onChange={() => toggleRow(row[pkField] as string | number)}
                           />
                         </td>
                         {fields.map((field, fi) => (

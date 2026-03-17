@@ -155,11 +155,11 @@ async def admin_list(
 async def admin_detail(
     app: str,
     model: str,
-    record_id: int,
+    record_id: str,
     admin: Annotated[User, Depends(get_admin_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> dict:
-    """Single record by id."""
+    """Single record by primary key."""
     entry = _resolve_entry(app, model)
     result = await get_record(session, entry, record_id)
     if result is None:
@@ -179,7 +179,7 @@ async def admin_create(
     entry = _resolve_entry(app, model)
     try:
         return await create_record(session, entry, body)
-    except PasswordIsWeak as e:
+    except (PasswordIsWeak, ValueError) as e:
         raise HTTPException(400, str(e))
     except IntegrityError:
         raise HTTPException(
@@ -192,7 +192,7 @@ async def admin_create(
 async def admin_update(
     app: str,
     model: str,
-    record_id: int,
+    record_id: str,
     body: dict[str, Any],
     admin: Annotated[User, Depends(get_admin_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)],
@@ -212,7 +212,7 @@ async def admin_update(
 async def admin_delete(
     app: str,
     model: str,
-    record_id: int,
+    record_id: str,
     admin: Annotated[User, Depends(get_admin_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> None:
@@ -241,7 +241,7 @@ async def admin_bulk_delete(
 async def admin_set_password_view(
     app: str,
     model: str,
-    record_id: int,
+    record_id: str,
     body: AdminChangePasswordRequest,
     admin: Annotated[User, Depends(get_admin_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)],

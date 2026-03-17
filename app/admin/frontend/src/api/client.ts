@@ -59,8 +59,8 @@ async function request<T = unknown>(path: string, options: RequestOptions = {}):
     body: encodeBody(body),
   });
 
-  // Try refresh on 401
-  if (res.status === 401 && accessToken) {
+  // Try refresh on 401 (including when accessToken is null, e.g. page reload)
+  if (res.status === 401) {
     const refreshed = await tryRefresh();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${accessToken}`;

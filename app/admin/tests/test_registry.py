@@ -71,6 +71,21 @@ def test_zero_config_register(fresh_registry):
     assert entry.admin_config.app_name == "TestApp"
 
 
+def test_pk_field_names_populated(fresh_registry):
+    """pk_field_names is populated from model primary key."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    assert entry.pk_field_names == ("id",)
+
+
+def test_pk_field_in_schema(fresh_registry):
+    """Schema output includes pk_field."""
+    fresh_registry.register(_TestItem, "TestApp")
+    schema = fresh_registry.get_schema()
+    model_schema = schema["apps"]["TestApp"]["models"]["_TestItem"]
+    assert model_schema["pk_field"] == "id"
+
+
 def test_zero_config_fields_introspected(fresh_registry):
     """Fields are introspected from the model."""
     fresh_registry.register(_TestItem, "TestApp")
@@ -180,7 +195,7 @@ def test_server_default_not_editable(fresh_registry):
 # ---------------------------------------------------------------------------
 
 def test_extended_registration(fresh_registry):
-    """Extended mode via decorator-like config."""
+    """Extended mode via admin_class kwarg."""
     from admin.registry import ModelAdmin
 
     class ItemAdmin(ModelAdmin):
@@ -193,6 +208,83 @@ def test_extended_registration(fresh_registry):
     assert entry is not None
     assert entry.admin_config.list_display == ("id", "name", "price")
     assert entry.search_field_names == ["name", "description"]
+
+
+def test_decorator_registration(fresh_registry):
+    """Extended mode via @site.register(Model) decorator."""
+    from admin.registry import ModelAdmin
+
+    @fresh_registry.register(_TestItem)
+    class ItemAdmin(ModelAdmin):
+        app_name = "Shop"
+        list_display = ("id", "name", "price")
+        search_fields = ("name", "description")
+
+    entry = fresh_registry.get_model_entry("Shop", "_TestItem")
+    assert entry is not None
+    assert entry.admin_config.list_display == ("id", "name", "price")
+    assert entry.search_field_names == ["name", "description"]
+
+
+# ---------------------------------------------------------------------------
+# Zero-config defaults (PK-based list_display, empty search_fields)
+# ---------------------------------------------------------------------------
+
+def test_zero_config_list_display_defaults_to_pk(fresh_registry):
+    """Zero-config registration defaults list_display to PK columns."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    assert entry.admin_config.list_display == ("id",)
+
+
+def test_zero_config_search_fields_empty(fresh_registry):
+    """Zero-config registration has empty search_field_names."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    assert entry.search_field_names == []
+
+
+def test_zero_config_schema_search_fields_null(fresh_registry):
+    """Schema output has search_fields=null for zero-config models."""
+    fresh_registry.register(_TestItem, "TestApp")
+    schema = fresh_registry.get_schema()
+    model_schema = schema["apps"]["TestApp"]["models"]["_TestItem"]
+    assert model_schema["search_fields"] is None
+
+
+def test_zero_config_schema_list_display_is_pk(fresh_registry):
+    """Schema output has list_display set to PK for zero-config models."""
+    fresh_registry.register(_TestItem, "TestApp")
+    schema = fresh_registry.get_schema()
+    model_schema = schema["apps"]["TestApp"]["models"]["_TestItem"]
+    assert model_schema["list_display"] == ["id"]
+
+
+def test_extended_schema_search_fields_populated(fresh_registry):
+    """Schema output includes search_fields when configured."""
+    from admin.registry import ModelAdmin
+
+    class ItemAdmin(ModelAdmin):
+        app_name = "Shop"
+        search_fields = ("name",)
+
+    fresh_registry.register(_TestItem, "Shop", admin_class=ItemAdmin)
+    schema = fresh_registry.get_schema()
+    model_schema = schema["apps"]["Shop"]["models"]["_TestItem"]
+    assert model_schema["search_fields"] == ["name"]
+
+
+def test_search_fields_filters_invalid_columns(fresh_registry):
+    """search_field_names silently drops column names not in the model."""
+    from admin.registry import ModelAdmin
+
+    class ItemAdmin(ModelAdmin):
+        app_name = "Shop"
+        search_fields = ("name", "nonexistent_column")
+
+    fresh_registry.register(_TestItem, "Shop", admin_class=ItemAdmin)
+    entry = fresh_registry.get_model_entry("Shop", "_TestItem")
+    assert entry.search_field_names == ["name"]
 
 
 # ---------------------------------------------------------------------------
