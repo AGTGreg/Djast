@@ -35,6 +35,9 @@ class AbstractBaseUser(models.Model):
     __abstract__ = True
 
     is_active: Mapped[bool] = mapped_column(default=True)
+    is_staff: Mapped[bool] = mapped_column(default=False)
+    is_superuser: Mapped[bool] = mapped_column(default=False)
+
     password: Mapped[str] = mapped_column(String(255))
     date_joined: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -164,6 +167,8 @@ class AbstractEmailUser(AbstractBaseUser):
         """
         Create and save a user with the given email and password.
         """
+        if not email or not email.strip():
+            raise ValueError("Email is required.")
         email = cls.normalize_email(email)
         return await super().create_user(
             session, password=password, email=email, **fields)
@@ -187,8 +192,6 @@ class AbstractDjangoUser(AbstractBaseUser):
     email: Mapped[str] = mapped_column(String(254), default="")
     first_name: Mapped[str] = mapped_column(String(150), default="")
     last_name: Mapped[str] = mapped_column(String(150), default="")
-    is_staff: Mapped[bool] = mapped_column(default=False)
-    is_superuser: Mapped[bool] = mapped_column(default=False)
 
     def __repr__(self) -> str:
         return f"<User(username={self.username})>"
@@ -205,6 +208,8 @@ class AbstractDjangoUser(AbstractBaseUser):
         """
         Create and save a user with the given username, email, and password.
         """
+        if not username or not username.strip():
+            raise ValueError("Username is required.")
         if email is not None:
             email = cls.normalize_email(email)
         return await super().create_user(

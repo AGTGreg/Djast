@@ -36,5 +36,6 @@ def run(module_name: str) -> None:
         shutil.copytree(template_dir, new_module_dir)
         print(f"Module '{module_name}' created successfully.")
         print("Don't forget to register your new router in djast/urls.py!")
+        print("Define setup_app(app) in __init__.py for app-level setup (e.g., static file mounts).")
     except Exception as e:
         print(f"Error creating module: {e}")

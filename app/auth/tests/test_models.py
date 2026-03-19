@@ -3,9 +3,13 @@ Comprehensive tests for the auth app.
 """
 from __future__ import annotations
 
+import importlib
+import sys
+
 import pytest
 import pytest_asyncio
 from datetime import datetime
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -33,6 +37,15 @@ class ConcreteDjangoUser(AbstractDjangoUser):
 # -----------------------------------------------------------------------------
 # Fixtures
 # -----------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True, scope="module")
+def _ensure_models_mapped():
+    """Re-register concrete test models if unmapped by other test suites."""
+    try:
+        sa_inspect(ConcreteEmailUser)
+    except Exception:
+        importlib.reload(sys.modules[__name__])
+
 
 @pytest_asyncio.fixture
 async def engine():

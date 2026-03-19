@@ -11,7 +11,6 @@ from fastapi import (
     Response
 )
 from fastapi.responses import RedirectResponse
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from djast.settings import settings
@@ -35,7 +34,7 @@ from auth.utils.tokens import (
     get_password_reset_token_generator,
 )
 
-from auth.forms import OAuth2EmailRequestForm
+from auth.forms import LoginForm
 from auth.utils import auth_backend
 from auth.utils.auth_backend import set_refresh_cookie, get_current_user
 from auth.utils import oauth as oauth_utils
@@ -44,11 +43,6 @@ from auth import exceptions as auth_exceptions
 from djast.rate_limit import limiter
 
 router = APIRouter()
-
-
-LoginForm = OAuth2PasswordRequestForm
-if settings.AUTH_USER_MODEL_TYPE == "email":
-    LoginForm = OAuth2EmailRequestForm
 
 
 @router.post(
@@ -112,7 +106,7 @@ async def login(
     returns the access token.
     """
     try:
-        access_token, refresh_token = await auth_backend.authenticate_user(
+        access_token, refresh_token, user = await auth_backend.authenticate_user(
             session=session,
             username=form_data.username,
             password=form_data.password

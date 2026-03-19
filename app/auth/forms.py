@@ -1,4 +1,13 @@
 from fastapi import Form
+from fastapi.security import OAuth2PasswordRequestForm
+
+from djast.settings import settings
+
+
+# Resolved once at import time — used by auth and admin views.
+LoginForm = OAuth2PasswordRequestForm
+if settings.AUTH_USER_MODEL_TYPE == "email":
+    LoginForm = OAuth2EmailRequestForm
 
 
 class OAuth2EmailRequestForm:

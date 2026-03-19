@@ -1,11 +1,12 @@
 from __future__ import annotations
 import re
 
+from dataclasses import dataclass
 from typing import Any, Optional, Self, TypeVar, Generic, TYPE_CHECKING, Sequence
 from datetime import datetime
 
 from pydantic import create_model
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, exists as sa_exists, func, inspect, select, delete as sa_delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncAttrs, AsyncSession
@@ -22,6 +23,20 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import Select
 
 T = TypeVar("T", bound="Base")
+
+
+@dataclass
+class ColumnMeta:
+    """Column metadata from SQLAlchemy introspection."""
+    name: str
+    python_type: type
+    nullable: bool
+    primary_key: bool
+    has_default: bool
+    default_value: Any
+    has_server_default: bool
+    has_onupdate: bool
+    max_length: int | None
 
 
 class Manager(Generic[T]):
@@ -389,6 +404,53 @@ class Model(Base):
         return Manager(cls).with_session(session)
 
     @classmethod
+    def columns_meta(
+        cls,
+        exclude: set[str] | None = None,
+    ) -> list[ColumnMeta]:
+        """Introspect SQLAlchemy columns and return structured metadata.
+
+        Args:
+            exclude: Optional set of column names to skip.
+
+        Returns:
+            A list of ColumnMeta dataclasses, one per non-excluded column.
+        """
+        mapper = inspect(cls)
+        exclude = exclude or set()
+        result: list[ColumnMeta] = []
+
+        for column in mapper.columns:
+            if column.name in exclude:
+                continue
+
+            try:
+                python_type = column.type.python_type
+            except NotImplementedError:
+                python_type = Any
+
+            default_value = None
+            has_default = column.default is not None
+            if has_default:
+                arg = column.default.arg
+                if isinstance(arg, (str, int, float, bool)):
+                    default_value = arg
+
+            result.append(ColumnMeta(
+                name=column.name,
+                python_type=python_type,
+                nullable=column.nullable,
+                primary_key=column.primary_key,
+                has_default=has_default,
+                default_value=default_value,
+                has_server_default=column.server_default is not None,
+                has_onupdate=getattr(column, "onupdate", None) is not None,
+                max_length=getattr(column.type, "length", None),
+            ))
+
+        return result
+
+    @classmethod
     def get_schema(cls, exclude: set[str] | None = None) -> type[BaseModel]:
         """
         Auto-generate a valid Pydantic BaseModel schema from the model's
@@ -401,26 +463,37 @@ class Model(Base):
         Returns:
             A Pydantic BaseModel subclass representing the schema.
         """
-        mapper = inspect(cls)
         fields = {}
-        exclude = exclude or set()
 
-        for column in mapper.columns:
-            if column.name in exclude:
-                continue
+        for col in cls.columns_meta(exclude):
+            python_type = (
+                Optional[col.python_type] if col.nullable else col.python_type
+            )
 
-            try:
-                python_type = column.type.python_type
-            except NotImplementedError:
-                python_type = Any
-
-            if column.nullable:
-                python_type = Optional[python_type]
+            if col.nullable:
                 default = None
+            elif col.default_value is not None:
+                default = col.default_value
             else:
                 default = ...
 
-            fields[column.name] = (python_type, default)
+            # Add string length constraints from SQLAlchemy column metadata.
+            field_kwargs: dict[str, Any] = {}
+            if python_type is str or (
+                col.nullable and python_type is Optional[str]
+            ):
+                if col.max_length is not None:
+                    field_kwargs["max_length"] = col.max_length
+                if not col.nullable and not col.has_default:
+                    field_kwargs["min_length"] = 1
+
+            if field_kwargs:
+                fields[col.name] = (
+                    python_type,
+                    Field(default=default, **field_kwargs),
+                )
+            else:
+                fields[col.name] = (python_type, default)
 
         return create_model(
             f"{cls.__name__}Schema",
