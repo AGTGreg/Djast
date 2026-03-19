@@ -175,5 +175,5 @@ Planned features for future releases:
 - [x] **Email Backend** - Pluggable async email with console and SMTP backends
 - [x] **Task Queue (TaskIQ)** - Async task queue with Redis, retries, and cron scheduling
 - [ ] **Better documentation** - Cover all modules and utilities.
-- [ ] **Basic Admin** - Simple admin interface for managing database records (inspired by Django Admin)
+- [x] **Basic Admin** - Simple admin interface for managing database records (inspired by Django Admin)
 - [ ] **Cookiecutter (or similar) Templates** - Project and micro-service initialization templates with cookiecutter for quick scaffolding
