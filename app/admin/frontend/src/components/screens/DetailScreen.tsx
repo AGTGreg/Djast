@@ -35,6 +35,7 @@ export default function DetailScreen() {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Password change state
   const [showPasswordForm, setShowPasswordForm] = useState(false);
@@ -107,6 +108,7 @@ export default function DetailScreen() {
   const handleSave = async () => {
     setSaving(true);
     setError('');
+    setFieldErrors({});
     const values = getFormValues();
 
     try {
@@ -125,8 +127,26 @@ export default function DetailScreen() {
       }
       navigate(`/${app}/${model}`);
     } catch (err: any) {
-      setError(err.detail || err.message || 'Save failed');
-      showToast(err.detail || 'Save failed', 'error');
+      if (Array.isArray(err.detail)) {
+        const perField: Record<string, string> = {};
+        const general: string[] = [];
+        for (const e of err.detail) {
+          const field = e.loc?.slice(-1)[0];
+          if (field) {
+            perField[field] = e.msg;
+          } else {
+            general.push(e.msg);
+          }
+        }
+        setFieldErrors(perField);
+        if (general.length) setError(general.join('\n'));
+      } else {
+        setError(
+          typeof err.detail === 'string' ? err.detail
+          : err.message || 'Save failed'
+        );
+      }
+      showToast('Validation failed', 'error');
     } finally {
       setSaving(false);
     }
@@ -207,7 +227,7 @@ export default function DetailScreen() {
         </div>
 
         {error && (
-          <div className="text-sm text-brand-red bg-red-50 border border-red-100 rounded-input px-4 py-2.5 mb-4">
+          <div className="text-sm text-brand-red bg-red-50 border border-red-100 rounded-input px-4 py-2.5 mb-4 whitespace-pre-line">
             {error}
           </div>
         )}
@@ -223,6 +243,7 @@ export default function DetailScreen() {
                   field={field}
                   value={record ? record[field.name] : ''}
                   isNew={isNew}
+                  error={fieldErrors[field.name]}
                 />
               );
             })}
@@ -236,10 +257,13 @@ export default function DetailScreen() {
                 <div className="flex-1">
                   <input
                     type="password"
-                    className="form-field"
+                    className={fieldErrors.password ? 'form-field form-field-error' : 'form-field'}
                     data-field="__password"
                     placeholder="Enter password"
                   />
+                  {fieldErrors.password && (
+                    <p className="text-sm text-brand-red mt-1">{fieldErrors.password}</p>
+                  )}
                 </div>
               </div>
             )}
@@ -311,7 +335,7 @@ export default function DetailScreen() {
 }
 
 // ─── Form row ────────────────────────────────────────────────
-function FormRow({ field, value, isNew }: { field: SchemaField; value: unknown; isNew: boolean }) {
+function FormRow({ field, value, isNew, error }: { field: SchemaField; value: unknown; isNew: boolean; error?: string }) {
   const label = field.name.replace(/_/g, ' ');
 
   return (
@@ -320,18 +344,25 @@ function FormRow({ field, value, isNew }: { field: SchemaField; value: unknown; 
         {label}
       </label>
       <div className="flex-1">
-        <FieldInput field={field} value={value} isNew={isNew} />
+        <FieldInput field={field} value={value} isNew={isNew} error={error} />
+        {error && (
+          <p className="text-sm text-brand-red mt-1">{error}</p>
+        )}
       </div>
     </div>
   );
 }
 
 // ─── Field input renderer ────────────────────────────────────
-function FieldInput({ field, value, isNew }: { field: SchemaField; value: unknown; isNew: boolean }) {
+function FieldInput({ field, value, isNew, error }: { field: SchemaField; value: unknown; isNew: boolean; error?: string }) {
+  const baseClass = !field.editable
+    ? 'form-field form-field-readonly'
+    : error ? 'form-field form-field-error' : 'form-field';
+
   if (field.type === 'select') {
     return (
       <select
-        className={field.editable ? 'form-field' : 'form-field form-field-readonly'}
+        className={baseClass}
         data-field={field.name}
         disabled={!field.editable}
         defaultValue={String(value ?? '')}
@@ -354,7 +385,7 @@ function FieldInput({ field, value, isNew }: { field: SchemaField; value: unknow
   return (
     <input
       type={inputType}
-      className={field.editable ? 'form-field' : 'form-field form-field-readonly'}
+      className={baseClass}
       data-field={field.name}
       defaultValue={value != null ? String(value) : ''}
       placeholder={isNew ? `Enter ${field.name.replace(/_/g, ' ')}` : ''}

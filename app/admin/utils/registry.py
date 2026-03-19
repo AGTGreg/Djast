@@ -10,7 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import Field, create_model
 from sqlalchemy import inspect as sa_inspect
+
+from djast.db.models import ColumnMeta
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +27,7 @@ class FieldMeta:
     type: str  # integer, string, email, boolean, datetime, decimal, select
     editable: bool
     required: bool
+    default: Any = None
     options: list[str] | None = None
 
 
@@ -53,6 +57,8 @@ class ModelAdminEntry:
     fields: list[FieldMeta] = field(default_factory=list)
     search_field_names: list[str] = field(default_factory=list)
     is_user_model: bool = False
+    write_schema: type | None = None
+    update_schema: type | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -67,52 +73,19 @@ _PYTHON_TYPE_MAP: dict[type, str] = {
 }
 
 
-def _resolve_field_type(
-    column: Any,
-    admin_config: ModelAdmin,
-) -> str:
-    """Map a SQLAlchemy column to an admin field type string."""
-    if admin_config.field_options and column.name in admin_config.field_options:
+def _resolve_admin_type(col: ColumnMeta, admin_config: ModelAdmin) -> str:
+    """Map a ColumnMeta to an admin field type string."""
+    if admin_config.field_options and col.name in admin_config.field_options:
         return "select"
 
-    try:
-        from datetime import datetime as dt_cls
-        python_type = column.type.python_type
-        if python_type is dt_cls:
-            return "datetime"
-    except NotImplementedError:
-        return "string"
+    from datetime import datetime as dt_cls
+    if col.python_type is dt_cls:
+        return "datetime"
 
-    if column.name == "email" and python_type is str:
+    if col.name == "email" and col.python_type is str:
         return "email"
 
-    return _PYTHON_TYPE_MAP.get(python_type, "string")
-
-
-def _is_editable(column: Any) -> bool:
-    """A column is not editable if it's a PK, has server_default+not nullable,
-    or has onupdate."""
-    if column.primary_key:
-        return False
-    if column.server_default is not None and not column.nullable:
-        return False
-    if getattr(column, "onupdate", None) is not None:
-        return False
-    return True
-
-
-def _is_required(column: Any) -> bool:
-    """A column is required if it's not PK, not nullable, no default,
-    and no server_default."""
-    if column.primary_key:
-        return False
-    if column.nullable:
-        return False
-    if column.default is not None:
-        return False
-    if column.server_default is not None:
-        return False
-    return True
+    return _PYTHON_TYPE_MAP.get(col.python_type, "string")
 
 
 def _get_pk_names(model_class: type) -> tuple[str, ...]:
@@ -128,20 +101,23 @@ def _introspect_fields(
     model_class: type,
     admin_config: ModelAdmin,
 ) -> list[FieldMeta]:
-    """Introspect SQLAlchemy columns to build field metadata list."""
-    mapper = sa_inspect(model_class)
+    """Build field metadata list from model column introspection."""
     exclude = admin_config.exclude_fields or set()
     fields: list[FieldMeta] = []
 
-    for column in mapper.columns:
-        if column.name in exclude:
-            continue
+    for col in model_class.columns_meta(exclude):
+        editable = not (
+            col.primary_key
+            or (col.has_server_default and not col.nullable)
+            or col.has_onupdate
+        )
         fields.append(FieldMeta(
-            name=column.name,
-            type=_resolve_field_type(column, admin_config),
-            editable=_is_editable(column),
-            required=_is_required(column),
-            options=(admin_config.field_options or {}).get(column.name),
+            name=col.name,
+            type=_resolve_admin_type(col, admin_config),
+            editable=editable,
+            required=not col.primary_key and not col.nullable,
+            default=col.default_value,
+            options=(admin_config.field_options or {}).get(col.name),
         ))
 
     return fields
@@ -208,13 +184,20 @@ class AdminSite:
         if is_user:
             config.exclude_fields = (config.exclude_fields or set()) | {"password"}
 
+        pk_names = _get_pk_names(model_class)
+        if not pk_names:
+            raise ValueError(
+                f"{model_class.__name__} has no primary key"
+                f" and cannot be registered with admin."
+            )
+
         fields = _introspect_fields(model_class, config)
 
         # Default list_display to primary key columns (filtered by visible fields).
         if config.list_display is None:
             visible = {f.name for f in fields}
             config.list_display = tuple(
-                n for n in _get_pk_names(model_class) if n in visible
+                n for n in pk_names if n in visible
             )
 
         search_field_names: list[str] = []
@@ -224,13 +207,38 @@ class AdminSite:
                 f for f in config.search_fields if f in field_names
             ]
 
+        # Build write schema from get_schema(), excluding
+        # non-editable fields (PKs, server_defaults, onupdate).
+        non_editable = {
+            f.name for f in fields if not f.editable
+        }
+        schema_exclude = (
+            (config.exclude_fields or set()) | non_editable
+        )
+        base_schema = model_class.get_schema(
+            exclude=schema_exclude,
+        )
+        if is_user:
+            write_schema = create_model(
+                f"{model_class.__name__}AdminWrite",
+                __base__=base_schema,
+                password=(
+                    str,
+                    Field(min_length=1, max_length=100),
+                ),
+            )
+        else:
+            write_schema = base_schema
+
         entry = ModelAdminEntry(
             model_class=model_class,
             admin_config=config,
-            pk_field_names=_get_pk_names(model_class),
+            pk_field_names=pk_names,
             fields=fields,
             search_field_names=search_field_names,
             is_user_model=is_user,
+            write_schema=write_schema,
+            update_schema=base_schema,
         )
 
         app_name = config.app_name
@@ -265,6 +273,7 @@ class AdminSite:
                                         "type": str,
                                         "editable": bool,
                                         "required": bool,
+                                        "default": value | null,
                                         "options": list | null,
                                     },
                                     ...
@@ -293,6 +302,7 @@ class AdminSite:
                             "type": f.type,
                             "editable": f.editable,
                             "required": f.required,
+                            "default": f.default,
                             "options": f.options,
                         }
                         for f in entry.fields

@@ -6,9 +6,11 @@ authenticates the user AND verifies staff status before issuing tokens.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +56,25 @@ def _resolve_entry(app: str, model: str):
     if entry is None:
         raise HTTPException(404, "Model not found.")
     return entry
+
+
+@contextmanager
+def _handle_write_errors():
+    """Shared error handling for create/update operations."""
+    try:
+        yield
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.errors(),
+        )
+    except (PasswordIsWeak, ValueError) as e:
+        raise HTTPException(400, str(e))
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A record with the given values already exists.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -177,18 +198,11 @@ async def admin_create(
 ) -> dict:
     """Create a new record."""
     entry = _resolve_entry(app, model)
-    try:
+    with _handle_write_errors():
         return await create_record(session, entry, body)
-    except (PasswordIsWeak, ValueError) as e:
-        raise HTTPException(400, str(e))
-    except IntegrityError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A record with the given values already exists.",
-        )
 
 
-@router.patch("/{app}/{model}/{record_id}/")
+@router.put("/{app}/{model}/{record_id}/")
 async def admin_update(
     app: str,
     model: str,
@@ -197,9 +211,10 @@ async def admin_update(
     admin: Annotated[User, Depends(get_admin_user)],
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> dict:
-    """Partial update a record."""
+    """Update a record."""
     entry = _resolve_entry(app, model)
-    result = await update_record(session, entry, record_id, body)
+    with _handle_write_errors():
+        result = await update_record(session, entry, record_id, body)
     if result is None:
         raise HTTPException(404, "Record not found.")
     return result

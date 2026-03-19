@@ -470,8 +470,8 @@ async def test_create_with_weak_password(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_create_user_without_password_returns_400(admin_client):
-    """Creating a user model without a password must fail with 400."""
+async def test_create_user_without_password_returns_422(admin_client):
+    """Creating a user model without a password must fail with 422."""
     client, mode = admin_client
     _, token = await _create_admin_user(client, mode)
 
@@ -485,8 +485,62 @@ async def test_create_user_without_password_returns_400(admin_client):
         json=payload,
         headers={"Authorization": f"Bearer {token}"},
     )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_user_without_identity_field_returns_422(admin_client):
+    """Creating a user without username (django) or email (email mode) must fail."""
+    client, mode = admin_client
+    _, token = await _create_admin_user(client, mode)
+
+    # Only password — missing the identity field entirely
+    payload = {"password": _strong_password("noid")}
+
+    resp = await client.post(
+        f"{_admin_prefix()}/Auth/User/",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_user_with_empty_identity_field_returns_422(admin_client):
+    """Creating a user with empty string username/email must fail."""
+    client, mode = admin_client
+    _, token = await _create_admin_user(client, mode)
+
+    if mode == "django":
+        payload = {"username": "", "password": _strong_password("empty")}
+    else:
+        payload = {"email": "", "password": _strong_password("empty")}
+
+    resp = await client.post(
+        f"{_admin_prefix()}/Auth/User/",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_user_with_whitespace_identity_field_returns_400(admin_client):
+    """Creating a user with whitespace-only username/email must fail."""
+    client, mode = admin_client
+    _, token = await _create_admin_user(client, mode)
+
+    if mode == "django":
+        payload = {"username": "   ", "password": _strong_password("ws")}
+    else:
+        payload = {"email": "   ", "password": _strong_password("ws")}
+
+    resp = await client.post(
+        f"{_admin_prefix()}/Auth/User/",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert resp.status_code == 400
-    assert "password" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -498,9 +552,17 @@ async def test_update_record(admin_client):
     client, mode = admin_client
     user_id, token = await _create_admin_user(client, mode)
 
-    resp = await client.patch(
+    # GET current record to build full payload
+    detail = await client.get(
         f"{_admin_prefix()}/Auth/User/{user_id}/",
-        json={"is_active": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    payload = detail.json()
+    payload["is_active"] = False
+
+    resp = await client.put(
+        f"{_admin_prefix()}/Auth/User/{user_id}/",
+        json=payload,
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
@@ -510,11 +572,18 @@ async def test_update_record(admin_client):
 @pytest.mark.asyncio
 async def test_update_404_for_missing(admin_client):
     client, mode = admin_client
-    _, token = await _create_admin_user(client, mode)
+    user_id, token = await _create_admin_user(client, mode)
 
-    resp = await client.patch(
+    # Use a valid payload shape but non-existent record
+    detail = await client.get(
+        f"{_admin_prefix()}/Auth/User/{user_id}/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    payload = detail.json()
+
+    resp = await client.put(
         f"{_admin_prefix()}/Auth/User/99999/",
-        json={"is_active": False},
+        json=payload,
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 404
@@ -595,7 +664,8 @@ async def test_bulk_delete(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_bulk_delete_empty_ids(admin_client):
+async def test_bulk_delete_empty_ids_returns_422(admin_client):
+    """Empty ids list is rejected by schema validation."""
     client, mode = admin_client
     _, token = await _create_admin_user(client, mode)
 
@@ -604,8 +674,7 @@ async def test_bulk_delete_empty_ids(admin_client):
         json={"ids": []},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["deleted"] == 0
+    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -650,3 +719,55 @@ async def test_set_password_user_not_found(admin_client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Schema validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_rejects_invalid_field_type(admin_client):
+    """Sending a string where an integer is expected returns 422."""
+    client, mode = admin_client
+    _, token = await _create_admin_user(client, mode)
+
+    if mode == "django":
+        payload = {
+            "username": "badtype",
+            "password": _strong_password("type"),
+            "is_active": "not_a_bool_or_int",
+        }
+    else:
+        payload = {
+            "email": "badtype@example.com",
+            "password": _strong_password("type"),
+            "is_active": "not_a_bool_or_int",
+        }
+
+    resp = await client.post(
+        f"{_admin_prefix()}/Auth/User/",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_invalid_field_type(admin_client):
+    """Sending invalid type on PUT returns 422."""
+    client, mode = admin_client
+    user_id, token = await _create_admin_user(client, mode)
+
+    detail = await client.get(
+        f"{_admin_prefix()}/Auth/User/{user_id}/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    payload = detail.json()
+    payload["is_active"] = "not_a_bool_or_int"
+
+    resp = await client.put(
+        f"{_admin_prefix()}/Auth/User/{user_id}/",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422

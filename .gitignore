@@ -266,3 +266,4 @@ dist
 
 migrations/
 alembic.ini
+code_check_report.md

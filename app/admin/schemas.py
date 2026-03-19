@@ -11,6 +11,7 @@ class FieldSchema(BaseModel):
     type: str
     editable: bool
     required: bool
+    default: Any = None
     options: list[str] | None = None
 
 
@@ -45,7 +46,7 @@ class PaginatedResponse(BaseModel):
 
 
 class BulkDeleteRequest(BaseModel):
-    ids: list[int | str] = Field(max_length=500)
+    ids: list[int | str] = Field(min_length=1, max_length=500)
 
 
 class BulkDeleteResponse(BaseModel):
@@ -53,4 +54,4 @@ class BulkDeleteResponse(BaseModel):
 
 
 class AdminChangePasswordRequest(BaseModel):
-    new_password: str
+    new_password: str = Field(min_length=1, max_length=100)

@@ -131,6 +131,15 @@
   pointer-events: none;
 }
 
+@utility form-field-error {
+  border-color: var(--color-brand-red);
+  &:focus {
+    outline-color: var(--color-brand-red);
+    box-shadow: 0 0 0 2px rgb(255 71 87 / 0.3);
+    border-color: var(--color-brand-red);
+  }
+}
+
 @utility form-field-icon {
   padding-left: 3.25rem;
 }

@@ -191,6 +191,59 @@ def test_server_default_not_editable(fresh_registry):
 
 
 # ---------------------------------------------------------------------------
+# Required / default interaction
+# ---------------------------------------------------------------------------
+
+def test_field_with_default_is_required(fresh_registry):
+    """Non-nullable field with a default is still required."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    active = next(f for f in entry.fields if f.name == "is_active")
+    assert active.required is True
+
+
+def test_field_with_default_has_default_value(fresh_registry):
+    """Scalar default is extracted from the column."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    active = next(f for f in entry.fields if f.name == "is_active")
+    assert active.default is True
+    price = next(f for f in entry.fields if f.name == "price")
+    assert price.default == 0.0
+
+
+def test_callable_default_returns_none(fresh_registry):
+    """Callable defaults (e.g. datetime.now) are not extracted."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    created = next(
+        f for f in entry.fields if f.name == "created_at"
+    )
+    assert created.default is None
+
+
+def test_nullable_field_default_is_none(fresh_registry):
+    """Nullable field with default=None has no extracted default."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    desc = next(
+        f for f in entry.fields if f.name == "description"
+    )
+    assert desc.default is None
+
+
+def test_schema_includes_default(fresh_registry):
+    """Schema output includes default values."""
+    fresh_registry.register(_TestItem, "TestApp")
+    schema = fresh_registry.get_schema()
+    fields = schema["apps"]["TestApp"]["models"]["_TestItem"]["fields"]
+    active = next(f for f in fields if f["name"] == "is_active")
+    assert active["default"] is True
+    name = next(f for f in fields if f["name"] == "name")
+    assert name["default"] is None
+
+
+# ---------------------------------------------------------------------------
 # Extended mode (decorator)
 # ---------------------------------------------------------------------------
 
@@ -397,9 +450,94 @@ def test_non_user_model_no_password_change(fresh_registry):
 # Default registration
 # ---------------------------------------------------------------------------
 
+def test_register_model_without_pk_raises(fresh_registry):
+    """Registering a model with no primary key raises ValueError."""
+    from unittest.mock import patch
+
+    with patch(
+        "admin.utils.registry._get_pk_names", return_value=()
+    ):
+        with pytest.raises(
+            ValueError, match="no primary key"
+        ):
+            fresh_registry.register(
+                _TestItem, "TestApp"
+            )
+
+
 def test_default_user_registered():
     """The singleton site has the User model registered under Auth."""
     from admin.registry import site
     entry = site.get_model_entry("Auth", "User")
     assert entry is not None
     assert entry.is_user_model is True
+
+
+# ---------------------------------------------------------------------------
+# Write schema generation
+# ---------------------------------------------------------------------------
+
+def test_write_schema_generated(fresh_registry):
+    """Registered model gets a write_schema."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    assert entry.write_schema is not None
+
+
+def test_write_schema_excludes_non_editable(fresh_registry):
+    """PK and server_default fields are excluded from write_schema."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    field_names = set(entry.write_schema.model_fields.keys())
+    assert "id" not in field_names
+    assert "created_at" not in field_names
+
+
+def test_write_schema_includes_editable(fresh_registry):
+    """Editable fields are present in write_schema."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    field_names = set(entry.write_schema.model_fields.keys())
+    assert "name" in field_names
+    assert "price" in field_names
+    assert "is_active" in field_names
+
+
+def test_write_schema_required_fields(fresh_registry):
+    """Non-nullable no-default fields are required in the schema."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    name_field = entry.write_schema.model_fields["name"]
+    assert name_field.is_required()
+
+
+def test_write_schema_string_constraints(fresh_registry):
+    """String max_length from String(N) is present in schema."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    from pydantic.fields import FieldInfo
+    name_field = entry.write_schema.model_fields["name"]
+    max_len = next(
+        (m.max_length for m in name_field.metadata
+         if hasattr(m, "max_length")),
+        None,
+    )
+    assert max_len == 100
+
+
+def test_user_write_schema_has_password():
+    """User model write_schema includes password field."""
+    from admin.registry import AdminSite
+    from auth.models import User
+
+    reg = AdminSite()
+    reg.register(User, "Auth")
+    entry = reg.get_model_entry("Auth", "User")
+    assert "password" in entry.write_schema.model_fields
+
+
+def test_non_user_write_schema_no_password(fresh_registry):
+    """Non-user model write_schema has no password field."""
+    fresh_registry.register(_TestItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
+    assert "password" not in entry.write_schema.model_fields

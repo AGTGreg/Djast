@@ -1,5 +1,8 @@
 # Changelog
 
+## 19-03-26
+ - **Refactored: DRY column introspection via `Model.columns_meta()`** (`djast/db/models.py`, `admin/utils/registry.py`): `Model.get_schema()` and the admin's `_introspect_fields()` both walked SQLAlchemy mapper columns with duplicate logic for python type resolution, scalar default extraction, and nullable checks. Extracted a shared `ColumnMeta` dataclass and `Model.columns_meta()` classmethod as the single source of column metadata. Both `get_schema()` and `_introspect_fields()` now consume it. Removed four redundant helpers from the admin registry (`_is_editable`, `_is_required`, `_get_default_value`, `_resolve_field_type`); renamed the admin type mapper to `_resolve_admin_type` (now takes `ColumnMeta`).
+
 ## 18-03-26
  - **Improved: `register` decorator moved to `AdminSite` method** (`admin/utils/registry.py`): The `@register(Model, site)` standalone decorator in `admin/utils/decoratoers.py` required passing the site instance explicitly. Now `AdminSite.register()` works as both a direct call (`site.register(Model, "App")`) and a decorator (`@site.register(Model)`), matching Django's API. Standalone decorator file removed.
  - **Added: PK-based defaults for zero-config admin models** (`admin/utils/registry.py`): Models registered via `site.register(Model, "App")` without a `ModelAdmin` now default `list_display` to the model's primary key column(s) instead of showing all fields. Uses SQLAlchemy mapper introspection (`_get_pk_names()`), so it handles renamed PKs, non-`id` PKs, and composite PKs.

@@ -167,6 +167,8 @@ class AbstractEmailUser(AbstractBaseUser):
         """
         Create and save a user with the given email and password.
         """
+        if not email or not email.strip():
+            raise ValueError("Email is required.")
         email = cls.normalize_email(email)
         return await super().create_user(
             session, password=password, email=email, **fields)
@@ -206,6 +208,8 @@ class AbstractDjangoUser(AbstractBaseUser):
         """
         Create and save a user with the given username, email, and password.
         """
+        if not username or not username.strip():
+            raise ValueError("Username is required.")
         if email is not None:
             email = cls.normalize_email(email)
         return await super().create_user(

@@ -153,7 +153,7 @@ export async function updateRecord(
   id: number | string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return api.patch(`/admin/${app}/${model}/${id}/`, data);
+  return api.put(`/admin/${app}/${model}/${id}/`, data);
 }
 
 export async function deleteRecord(

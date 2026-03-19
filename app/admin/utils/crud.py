@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import delete as sa_delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from admin.utils.registry import ModelAdminEntry, FieldMeta
+from admin.utils.registry import ModelAdminEntry
 
 
 # ---------------------------------------------------------------------------
@@ -19,18 +19,6 @@ def _get_pk_col(entry: ModelAdminEntry) -> Any:
     """Return the SQLAlchemy column attribute for the model's primary key."""
     pk_name = entry.pk_field_names[0]
     return getattr(entry.model_class, pk_name)
-
-
-def _coerce_pk(entry: ModelAdminEntry, value: str) -> Any:
-    """Convert a string PK value to the appropriate Python type."""
-    pk_col = _get_pk_col(entry)
-    try:
-        python_type = pk_col.type.python_type
-    except (NotImplementedError, AttributeError):
-        return value
-    if python_type is int:
-        return int(value)
-    return value
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +116,7 @@ async def get_record(
     """Fetch a single record by primary key."""
     model = entry.model_class
     pk_col = _get_pk_col(entry)
-    pk_value = _coerce_pk(entry, record_id)
-    stmt = select(model).where(pk_col == pk_value)
+    stmt = select(model).where(pk_col == record_id)
     record = await session.scalar(stmt)
     if record is None:
         return None
@@ -140,28 +127,23 @@ async def get_record(
 # Create / Update / Delete
 # ---------------------------------------------------------------------------
 
-def _editable_fields(entry: ModelAdminEntry) -> set[str]:
-    """Return the set of editable field names."""
-    return {f.name for f in entry.fields if f.editable}
-
-
 async def create_record(
     session: AsyncSession,
     entry: ModelAdminEntry,
     data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Create a new record, filtering to editable fields only."""
+    """Validate and create a new record."""
     model = entry.model_class
-    editable = _editable_fields(entry)
-    filtered = {k: v for k, v in data.items() if k in editable}
+    validated = entry.write_schema.model_validate(data)
+    clean = validated.model_dump(exclude_unset=True)
 
     if entry.is_user_model:
-        password = data.get("password")
-        if not password:
-            raise ValueError("Password is required when creating a user.")
-        record = await model.create_user(session, password=password, **filtered)
+        password = clean.pop("password")
+        record = await model.create_user(
+            session, password=password, **clean,
+        )
     else:
-        record = await model.objects(session).create(**filtered)
+        record = await model.objects(session).create(**clean)
 
     return serialize_record(record, entry)
 
@@ -172,20 +154,19 @@ async def update_record(
     record_id: str,
     data: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Update a record with only editable field values."""
+    """Validate and update a record."""
     model = entry.model_class
     pk_col = _get_pk_col(entry)
-    pk_value = _coerce_pk(entry, record_id)
-    stmt = select(model).where(pk_col == pk_value)
+    stmt = select(model).where(pk_col == record_id)
     record = await session.scalar(stmt)
     if record is None:
         return None
 
-    editable = _editable_fields(entry)
-    filtered = {k: v for k, v in data.items() if k in editable}
+    validated = entry.update_schema.model_validate(data)
+    clean = validated.model_dump(exclude_unset=True)
 
-    if filtered:
-        for key, value in filtered.items():
+    if clean:
+        for key, value in clean.items():
             setattr(record, key, value)
         session.add(record)
         await session.flush()
@@ -202,8 +183,7 @@ async def delete_record(
     """Delete a record by primary key. Returns True if found and deleted."""
     model = entry.model_class
     pk_col = _get_pk_col(entry)
-    pk_value = _coerce_pk(entry, record_id)
-    stmt = select(model).where(pk_col == pk_value)
+    stmt = select(model).where(pk_col == record_id)
     record = await session.scalar(stmt)
     if record is None:
         return False
@@ -249,8 +229,7 @@ async def admin_set_password(
 
     model = entry.model_class
     pk_col = _get_pk_col(entry)
-    pk_value = _coerce_pk(entry, record_id)
-    stmt = select(model).where(pk_col == pk_value)
+    stmt = select(model).where(pk_col == record_id)
     user = await session.scalar(stmt)
     if user is None:
         raise LookupError("User not found.")
