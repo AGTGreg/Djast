@@ -1,9 +1,12 @@
 """Pydantic schemas for admin API request/response models."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from djast.settings import settings
 
 
 class FieldSchema(BaseModel):
@@ -54,4 +57,11 @@ class BulkDeleteResponse(BaseModel):
 
 
 class AdminChangePasswordRequest(BaseModel):
-    new_password: str = Field(min_length=1, max_length=100)
+    new_password: str = Field(max_length=100)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if not re.fullmatch(settings.PASSWORD_VALIDATION_REGEX, v):
+            raise ValueError("Password does not meet strength requirements.")
+        return v

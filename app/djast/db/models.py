@@ -199,14 +199,14 @@ class Manager(Generic[T]):
             return instance, False
 
         create_kwargs = {**kwargs, **(defaults or {})}
+        session = self._get_session()
         try:
-            instance = await self.create(**create_kwargs)
+            async with session.begin_nested():
+                instance = await self.create(**create_kwargs)
             return instance, True
         except IntegrityError:
-            # Another transaction created the row; rollback partial state and
-            # re-fetch
-            session = self._get_session()
-            await session.rollback()
+            # Another transaction created the row — the savepoint was rolled
+            # back automatically, preserving any prior work in the session.
             instance = await self.get(**kwargs)
             if instance is not None:
                 return instance, False
@@ -249,17 +249,17 @@ class Manager(Generic[T]):
             return instance, False
 
         create_kwargs = {**kwargs, **defaults}
+        session = self._get_session()
         try:
-            instance = await self.create(**create_kwargs)
+            async with session.begin_nested():
+                instance = await self.create(**create_kwargs)
             return instance, True
         except IntegrityError:
-            # Another transaction created the row; rollback partial state and
-            # update
-            session = self._get_session()
-            await session.rollback()
+            # Another transaction created the row — the savepoint was rolled
+            # back automatically, preserving any prior work in the session.
             instance = await self.get(**kwargs)
             if instance is not None:
-                await instance.update(self._get_session(), **defaults)
+                await instance.update(session, **defaults)
                 return instance, False
             # If still not found, re-raise - something else went wrong
             raise

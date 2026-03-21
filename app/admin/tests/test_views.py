@@ -705,7 +705,7 @@ async def test_set_password_weak(admin_client):
         json={"new_password": "weak"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio

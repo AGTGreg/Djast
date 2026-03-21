@@ -362,29 +362,3 @@ class TestSendTemplateEmailTaskiqRouting:
         call_kwargs = mock_kiq.call_args[1]
         assert call_kwargs["html_body"] == "<h1>Hello</h1>"
 
-
-# ---------------------------------------------------------------------------
-# run_in_executor utility
-# ---------------------------------------------------------------------------
-
-
-class TestRunInExecutor:
-    @pytest.mark.asyncio
-    async def test_runs_sync_function(self):
-        from djast.utils.tasks import run_in_executor
-
-        def add(a, b):
-            return a + b
-
-        result = await run_in_executor(add, 2, 3)
-        assert result == 5
-
-    @pytest.mark.asyncio
-    async def test_propagates_exception(self):
-        from djast.utils.tasks import run_in_executor
-
-        def fail():
-            raise RuntimeError("boom")
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await run_in_executor(fail)

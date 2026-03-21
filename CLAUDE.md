@@ -52,8 +52,7 @@ Djast/
 │   │   ├── commands/           # CLI commands (startapp, makemigrations, migrate, shell)
 │   │   ├── utils/              # Framework-wide utilities
 │   │   │   ├── email.py        # Email API (send_email, send_template_email, EmailMessage)
-│   │   │   ├── email_backends/ # Pluggable backends (console, SMTP)
-│   │   │   └── tasks.py        # run_in_executor for CPU-bound work in async tasks
+│   │   │   └── email_backends/ # Pluggable backends (console, SMTP)
 │   │   └── templates/          # Code generation templates for startapp
 │   ├── auth/                   # Auth module (built-in app)
 │   │   ├── models.py
@@ -94,7 +93,6 @@ Djast/
 - **tasks.py** — Framework-level tasks (e.g., `send_email_task`). App-specific tasks go in `<app>/tasks.py`.
 - **utils/email.py** — Async email API: `send_email()`, `send_template_email()`, `EmailMessage`, `BaseEmailBackend`, `get_email_backend()`. Pluggable backends via `EMAIL_BACKEND` setting. Jinja2 template rendering for HTML emails. Optionally routes through TaskIQ when `EMAIL_USE_TASKIQ=True`.
 - **utils/email_backends/** — `ConsoleEmailBackend` (dev default, prints to stdout), `SMTPEmailBackend` (production, wraps fastapi-mail). Custom backends subclass `BaseEmailBackend`.
-- **utils/tasks.py** — `run_in_executor()` for running CPU-bound sync code inside async tasks.
 - **commands/** — Custom CLI commands loaded dynamically by `manage.py`.
 - **templates/module/** — Template files used by `startapp` to scaffold new apps (includes `tasks.py` template).
 
