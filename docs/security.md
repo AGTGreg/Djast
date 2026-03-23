@@ -1,4 +1,4 @@
-**Security**
+# Security
 
 This document covers Djast's security architecture, the differences between development and production modes, and best practices for deployment.
 
@@ -6,7 +6,7 @@ This document covers Djast's security architecture, the differences between deve
 
 ---
 
-**Development vs production mode**
+## Development vs Production Mode
 
 Security behavior is controlled by the `DEBUG` setting. Set `DEBUG=false` in production — this single flag tightens multiple layers at once.
 
@@ -18,7 +18,7 @@ Security behavior is controlled by the `DEBUG` setting. Set `DEBUG=false` in pro
 | Database query logging | Enabled (`echo=True`) | Disabled |
 | CSRF cookie (if used) | Sent over HTTP | Sent only over HTTPS |
 
-**What you must configure for production:**
+### What you must configure for production
 
 ```bash
 # Required — security-critical
@@ -48,25 +48,28 @@ python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 ---
 
-**Authentication security**
+## Authentication Security
 
 Djast uses a two-token JWT system with multiple defense layers.
 
-**Access tokens** (short-lived, stateless):
+### Access tokens (short-lived, stateless)
+
 - Algorithm: HMAC-SHA256 (`HS256`)
 - Default lifetime: 30 minutes
 - Sent in the `Authorization: Bearer` header
 - Blacklist-checked on every request via Redis
 - Contains: user ID (`sub`), token type, expiry, unique JTI (ULID), issued-at timestamp
 
-**Refresh tokens** (long-lived, stateful):
+### Refresh tokens (long-lived, stateful)
+
 - Default lifetime: 7 days
 - Stored in an HTTP-only, `Secure`, `SameSite=lax` cookie
 - Path-scoped to `{APP_PREFIX}/auth` (not sent on other endpoints)
 - Backed by database records for rotation tracking and replay detection
 - **Single-use with rotation**: Each refresh produces a new token; the old one is marked as consumed
 
-**Token blacklisting** (Redis-backed):
+### Token blacklisting (Redis-backed)
+
 - Single-device logout: Blacklists the specific access token JTI
 - All-device logout: Sets a `min_iat` timestamp — all tokens issued before this time are rejected
 - TTL includes a 10-second buffer for clock skew between servers
@@ -74,7 +77,8 @@ Djast uses a two-token JWT system with multiple defense layers.
   - `true` (fail-closed): Tokens are treated as blacklisted, users must re-authenticate
   - `false` (fail-open): Tokens are assumed valid, prioritizing availability
 
-**Replay detection**:
+### Replay detection
+
 - If a refresh token is reused after rotation:
   - Within the grace period (default: 5 seconds): The same replacement token is returned (handles concurrent requests)
   - Outside the grace period: All sessions for the user are revoked immediately (stolen token assumed)
@@ -82,7 +86,7 @@ Djast uses a two-token JWT system with multiple defense layers.
 
 ---
 
-**Password security**
+## Password Security
 
 **Hashing**: PBKDF2-HMAC-SHA256 with 1,200,000 iterations. Salt is 128-bit minimum entropy. Format: `pbkdf2_sha256$<iterations>$<salt>$<hash>`. Compatible with Django's password hashing.
 
@@ -108,20 +112,25 @@ PASSWORD_VALIDATION_REGEX='^[\x20-\x7E]{12,100}$'
 
 ---
 
-**CSRF protection**
+## CSRF Protection
 
-Djast provides **opt-in** double-submit cookie CSRF protection. Because all authenticated endpoints use Bearer tokens (which the browser never auto-attaches), CSRF is not enforced globally — it would be unnecessary overhead. Instead, endpoints that authenticate via cookies (e.g., a refresh-token endpoint) can opt in by adding `csrf_protect` as a FastAPI dependency.
+Djast provides **opt-in** double-submit cookie CSRF protection. Because all authenticated endpoints use Bearer tokens (which the browser never auto-attaches), CSRF is not enforced globally. Endpoints that authenticate via cookies can opt in by adding `csrf_protect` as a FastAPI dependency.
 
-**How it works:**
+### How it works
+
 1. Endpoints that declare the `csrf_protect` dependency check that the `X-CSRF-Token` header matches the `csrf_token` cookie value.
 2. Comparison uses `secrets.compare_digest()` (constant-time) to prevent timing attacks.
 3. Mismatched or missing tokens return 403.
 
-No built-in auth endpoints currently use `csrf_protect` — they all authenticate via Bearer tokens, which are immune to CSRF. The CSRF utilities (`generate_csrf_token`, `set_csrf_cookie`, `csrf_protect`) are available for developers who add cookie-authenticated endpoints to their apps.
+No built-in auth endpoints currently use `csrf_protect` — they all authenticate via Bearer tokens, which are immune to CSRF. The CSRF utilities are available for developers who add cookie-authenticated endpoints to their apps.
 
-**Why opt-in, not opt-out?** Djast is an API framework. Bearer token authentication is immune to CSRF because the browser never auto-attaches the `Authorization` header. Global CSRF enforcement (like Django's `CsrfViewMiddleware`) is designed for session-cookie-based auth and would break API endpoints or require every endpoint to be exempted. The opt-in pattern means new endpoints work correctly by default, and developers explicitly protect the few routes that need it.
+### Why opt-in, not opt-out?
 
-**Protecting an endpoint**: Add `csrf_protect` as a dependency, and set the CSRF cookie when issuing credentials:
+Djast is an API framework. Bearer token authentication is immune to CSRF because the browser never auto-attaches the `Authorization` header. Global CSRF enforcement (like Django's `CsrfViewMiddleware`) is designed for session-cookie-based auth and would break API endpoints or require every endpoint to be exempted. The opt-in pattern means new endpoints work correctly by default.
+
+### Protecting an endpoint
+
+Add `csrf_protect` as a dependency, and set the CSRF cookie when issuing credentials:
 
 ```python
 from fastapi import Depends, Request, Response
@@ -140,7 +149,9 @@ async def my_endpoint(request: Request):
     ...
 ```
 
-**Frontend integration**: Read the `csrf_token` cookie and include it as the `X-CSRF-Token` header on CSRF-protected requests:
+### Frontend integration
+
+Read the `csrf_token` cookie and include it as the `X-CSRF-Token` header on CSRF-protected requests:
 
 ```javascript
 const csrfToken = document.cookie
@@ -159,7 +170,7 @@ fetch('/api/v1/my-endpoint', {
 
 ---
 
-**Brute force protection**
+## Brute-Force Protection
 
 Failed login attempts are tracked per-account in Redis. After `ACCOUNT_LOGIN_MAX_ATTEMPTS` (default: 5) failures, the account is locked for `ACCOUNT_LOGIN_LOCKOUT_SECONDS` (default: 300 seconds).
 
@@ -168,11 +179,11 @@ Failed login attempts are tracked per-account in Redis. After `ACCOUNT_LOGIN_MAX
 - Cleared on successful login
 - Set `ACCOUNT_LOGIN_MAX_ATTEMPTS=0` to disable entirely
 
-**Redis failure behavior** (`ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN`):
-- `true` (default): Login proceeds normally if Redis is unavailable. Prioritizes availability — users can still log in, but brute force protection is temporarily disabled.
-- `false`: Login is blocked with a 429 response. Prioritizes security — no login allowed if the lockout check cannot be performed.
+### Redis failure behavior
 
-Choose based on your threat model:
+`ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN` controls what happens when Redis is unavailable:
+- `true` (default): Login proceeds normally. Prioritizes availability — brute-force protection is temporarily disabled.
+- `false`: Login is blocked with a 429 response. Prioritizes security.
 
 ```bash
 # High-availability (e-commerce, SaaS):
@@ -184,7 +195,7 @@ ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN=false
 
 ---
 
-**Timing attack mitigation**
+## Timing Attack Mitigation
 
 Authentication is designed to prevent user enumeration via timing differences:
 
@@ -194,7 +205,7 @@ Authentication is designed to prevent user enumeration via timing differences:
 
 ---
 
-**Rate limiting**
+## Rate Limiting
 
 All auth endpoints are rate-limited via SlowAPI with Redis storage. Limits are per-IP using `X-Forwarded-For` (proxy-aware).
 
@@ -212,7 +223,7 @@ Adjust limits in settings based on your traffic patterns. Rate limiting uses a s
 
 ---
 
-**CORS configuration**
+## CORS Configuration
 
 CORS is configured in `settings.py` and applied as middleware in `main.py`.
 
@@ -229,7 +240,7 @@ Djast validates that `CORS_ALLOW_ORIGINS=["*"]` cannot be combined with `CORS_AL
 
 ---
 
-**OAuth security**
+## OAuth Security
 
 OAuth providers (Google, GitHub) are disabled by default. Each provider requires explicit opt-in via settings.
 
@@ -243,11 +254,11 @@ OAuth providers (Google, GitHub) are disabled by default. Each provider requires
 
 This prevents token leakage via browser history, referrer headers, or server logs.
 
-**Auto-linking by email**: If a user signs up with `alice@example.com` via password, and later signs in with Google using the same email, the accounts are automatically linked. This is convenient but means you trust the email verified by the OAuth provider. A future email verification feature will add an additional confirmation step.
+**Auto-linking by email**: If a user signs up with `alice@example.com` via password, and later signs in with Google using the same email, the accounts are automatically linked. This means you trust the email verified by the OAuth provider. When `EMAIL_VERIFICATION` is set to `"mandatory"`, OAuth users are auto-verified since the provider already confirmed their email.
 
 ---
 
-**Database security**
+## Database Security
 
 - All queries use SQLAlchemy ORM with parameterized statements (prevents SQL injection)
 - Session lifecycle is managed by the `get_async_session` dependency (auto-commit on success, auto-rollback on exception)
@@ -256,7 +267,7 @@ This prevents token leakage via browser history, referrer headers, or server log
 
 ---
 
-**Security configuration reference**
+## Configuration Reference
 
 All settings are in `app/djast/settings.py`, overridable via environment variables.
 
@@ -279,16 +290,16 @@ All settings are in `app/djast/settings.py`, overridable via environment variabl
 
 ---
 
-**Production checklist**
+## Production Checklist
 
-Before deploying to production, verify the following:
+Before deploying to production:
 
 - [ ] `DEBUG=false`
 - [ ] `SECRET_KEY` is a unique, randomly generated string (50+ characters)
 - [ ] `CORS_ALLOW_ORIGINS` is set to your specific frontend domain(s)
 - [ ] `CORS_ALLOW_CREDENTIALS` is set appropriately (`true` only if frontend sends cookies)
 - [ ] Database is PostgreSQL (not SQLite)
-- [ ] Redis is running and accessible (required for rate limiting, token blacklist, brute force protection)
+- [ ] Redis is running and accessible (required for rate limiting, token blacklist, brute-force protection)
 - [ ] HTTPS is configured (required for `Secure` cookies)
 - [ ] `OAUTH_LOGIN_REDIRECT_URL` points to your production frontend (if using OAuth)
 - [ ] OAuth client secrets are set via environment variables (never committed to source)

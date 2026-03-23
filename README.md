@@ -1,179 +1,121 @@
 # Djast
+
 > **FastAPI for Django developers.**
 
-## 🚀 Overview
+## Overview
 
-**Djast** is a Web framework based on FastAPI designed to bridge the gap between Django and FastAPI. It brings the familiar developer experience of Django: structured apps, a `manage.py` CLI, and centralized configuration to the high-performance, asynchronous world of FastAPI.
+**Djast** is a web framework that brings Django's developer experience — structured apps, a `manage.py` CLI, and centralized settings — to FastAPI's async performance.
 
-### The Philosophy:
-Djast does **not** abstract FastAPI and SQLAlchemy or make them heavier or more complex. It doesn't hide the underlying logic behind thick abstraction layers. It is designed for people who want to use a well established and battle testsed stack (FastAPI and SQLAlchemy) **sprinkled with a little bit of "Django magic"**.
+It does **not** abstract away FastAPI or SQLAlchemy. You work with the same tools you already know, just with a layer of Django-style convenience on top. If you're a Django developer who wants speed, or a FastAPI developer who wants structure, Djast is for you.
 
-Whether you are a Django developer looking for speed, or a FastAPI developer looking for structure, you will appreciate Djast.
+## Features
 
-## ✨ Features
+- **Django-style CLI** — `startapp`, `makemigrations`, `migrate`, `shell`, `createsuperuser`
+- **Django-style project layout** — Modular apps with `models.py`, `views.py`, `schemas.py`, `utils/`, `tests/`
+- **Django-style ORM** — `Model.objects(session).get()`, `.filter()`, `.create()` and more
+- **[Admin Panel](docs/admin.md)** — Model registry, CRUD API, React frontend. Register models and get a working admin at `/admin/`
+- **[Auth](docs/auth.md)** — Django-compatible user model with `pbkdf2_sha256` hashing, JWT access/refresh tokens, signup, login, email verification, password reset, CSRF protection, brute-force lockout. Works with existing Django databases out of the box
+- **[OAuth2](docs/auth.md)** — Optional Google & GitHub social login, disabled by default
+- **[Email](docs/email.md)** — Pluggable async backend (console for dev, SMTP for production) with Jinja2 templates
+- **[Task Queue](docs/taskiq.md)** — Redis-backed async tasks with retries, cron scheduling, and optional email dispatch
+- **[Security](docs/security.md)** — Rate limiting, token blacklisting, brute-force protection, CSRF double-submit cookies
+- **Async SQLAlchemy** — SQLite for dev, PostgreSQL for production. Switch with an env var
+- **Dockerized** — `docker-compose.yaml` with app, Redis, TaskIQ worker, and scheduler
 
-- **Django-style CLI (`manage.py`)**:
-  - `python manage.py startapp <name>`: Generate new modular apps instantly.
-  - `python manage.py makemigrations`: Auto-generate Alembic migrations with renaming and drop_table/drop_column detection.
-  - `python manage.py migrate`: Apply database migrations.
-  - `python manage.py shell`: Interactive shell with app context and session pre-loaded.
-- **Familiar Structure**: Organized like a Django project with `djast/settings.py`, `djast/urls.py`, and modular apps.
-- **Pure Performance**: Maintains the raw speed of FastAPI and async SQLAlchemy without overhead.
-- **Database Ready**: Async SQLAlchemy setup (SQLite, Postgres) with Alembic for migrations included out of the box.
-- **[Auth](docs/auth.md)**: JWT access/refresh tokens, signup, login, email verification, forgot-password, CSRF protection, brute force lockout.
-- **[OAuth2](docs/auth.md)**: Optional Google & GitHub social login — disabled by default, toggled via settings.
-- **[Email](docs/email.md)**: Pluggable async email backend (console for dev, SMTP for production) with Jinja2 templates.
-- **[TaskIQ](docs/taskiq.md)**: Redis-backed async task queue with retries, cron scheduling, and optional email dispatch.
-- **[Security](docs/security.md)**: CSRF double-submit cookies, rate limiting, Redis token blacklisting, brute force protection.
-- **Dockerized**: Includes `Dockerfile` and `docker-compose.yaml` with app, Redis, TaskIQ worker, and scheduler.
+## Quick Start
 
+[Follow the quick start guide](quickstart.md) to build a working API in 10 minutes.
 
-## 🛠️ Quick Start
-
-[Follow the quick start guide here](quickstart.md).
-
-## 📂 Project Structure
+## Project Structure
 
 ```text
 app/
-├── djast/              # Djast configuration (settings, urls, db, commands)
-├── myapp/              # Your module here. Created via `manage.py startapp myapp`
+├── djast/              # Core framework (settings, urls, db, commands)
+├── admin/              # Built-in admin panel
+├── auth/               # Built-in auth module
+├── templates/          # Email and code generation templates
+├── migrations/         # Alembic migrations
+├── myapp/              # Your apps go here (created via manage.py startapp)
 ├── main.py             # ASGI entry point
-├── manage.py           # CLI utility
+├── manage.py           # CLI
 └── requirements.txt    # Dependencies
 ```
 
-## ⚙️ Settings
+## CLI
 
-Configuration is managed in `djast/settings.py` using Pydantic's `BaseSettings`.
+All commands run from the `app/` directory:
 
-### Key Settings
+```bash
+python manage.py startapp <name>       # Scaffold a new app
+python manage.py makemigrations [msg]  # Generate a migration (detects renames, warns on drops)
+python manage.py migrate               # Apply migrations
+python manage.py shell                 # IPython shell with models, session, and settings loaded
+python manage.py createsuperuser       # Create an admin user
+```
 
--   **`PROJECT_NAME`**: The name of your API (displayed in docs).
--   **`DEBUG`**: Toggles debug mode.
--   **`DATABASES`**: Dictionary configuration for databases. Defaults to SQLite.
--   **`CORS_ALLOW_ORIGINS`**: List of allowed origins for CORS.
--   **`TIME_ZONE`**: For timezone aware datetimes from `timezone` util.
+## Models
 
-
-## 🗄️ Database Models
-
-Djast provides a robust base for your SQLAlchemy models, designed to provide a familiar API.
+Define models by inheriting from `models.Model`. You get an auto-generated table name, integer PK, async attributes, a Django-style manager, and `get_schema()` for instant Pydantic models.
 
 ```python
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
-
 from djast.db import models
 
 class Item(models.Model):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    notes: Mapped[str | None] = mapped_column(String(512), default=None)
     is_active: Mapped[bool] = mapped_column(server_default="false", nullable=False)
-
-    def __repr__(self) -> str:
-        return f"<Item id={self.id} name={self.name!r}>"
 ```
 
-### Why inherit from `models.Model`?
-
-Inheriting from `djast.db.models.Model` is the recommended default. You get:
-1.  **Automatic Table Naming**: Tables are automatically named based on the app module and class name (e.g., `myapp_item` for an `Item` model in the `myapp` app).
-2.  **Async Attributes**: Includes `AsyncAttrs` support, allowing you to await lazy-loaded relationships.
-3.  **Automatic Primary Key**: Adds a standard integer `id` primary key column.
-4.  **Django-style Manager**: Access to the `objects` interface for queries for common Django-style queries.
-5.  **Schema Generation**: Access to `get_schema` for instant Pydantic models.
-
-### Key Features
-
-#### `objects` Manager
-The `objects` class method returns a manager instance bound to your async session, providing a Django-like API for common database operations.
+Query with the `objects` manager:
 
 ```python
-# In your view/api
-item = await Item.objects(session).get(id=1)  # Get by any field(s)
-item = await Item.objects(session).get(name="Greg", is_active=True)  # Multiple filters
+item = await Item.objects(session).get(id=1)
 items = await Item.objects(session).filter(is_active=True)
-new_item = await Item.objects(session).create(name="Greg")
-new_item, created = await Item.objects(session).update_or_create(id=1, defaults={"name": "Greg"})
+new_item = await Item.objects(session).create(name="Laptop")
 ```
 
-#### `get_schema`
-Inspects your SQLAlchemy model and generates a Pydantic `BaseModel` on the fly for your CRUD needs.
+Generate Pydantic schemas from models:
 
 ```python
-# Generate a full schema
 ItemRead = Item.get_schema()
-
-# Generate a schema excluding specific fields (e.g., for creation)
 ItemCreate = Item.get_schema(exclude={"id", "created_at", "updated_at"})
 ```
 
+For more details, see [Models documentation](docs/models.md).
 
-## 🔄 Migrations
+## Settings
 
-Djast wraps Alembic to provide a Django-like migration workflow.
+All configuration lives in `djast/settings.py` using Pydantic `BaseSettings`. Key settings:
 
-### Making Migrations
+| Setting | Description |
+|---------|-------------|
+| `PROJECT_NAME` | API name (shown in docs) |
+| `DEBUG` | Debug mode toggle |
+| `DATABASES` | Database config (defaults to SQLite) |
+| `AUTH_USER_MODEL_TYPE` | `"django"` (username) or `"email"` (email-based auth) |
+| `CORS_ALLOW_ORIGINS` | Allowed CORS origins |
+| `EMAIL_BACKEND` | `"console"` (dev) or SMTP path (production) |
+| `SECRET_KEY` | Used for JWT and token signing |
 
-To generate a new migration based on changes to your models:
+See `djast/settings.py` for the full list.
 
-```bash
-python manage.py makemigrations [message (optional)]
-```
+## Documentation
 
-**What it does:**
-1.  **Interactive Renames**: If it detects a table or column drop paired with a creation, it will ask if you renamed it. If yes, it automatically generates the correct `rename_table` or `alter_column` operations instead of dropping data.
-2.  **Safety Checks**: Warns you if a migration contains dangerous operations (like dropping a table or column) that could cause data loss, giving you a chance to abort.
-3.  **Auto-init**: If Alembic is not set up, it initializes it automatically on the first run.
-4.  Your migrations live in `migrations/`
+- [Quick Start](quickstart.md)
+- [Models](docs/models.md)
+- [Auth](docs/auth.md)
+- [Admin Panel](docs/admin.md)
+- [Email](docs/email.md)
+- [Task Queue](docs/taskiq.md)
+- [Security](docs/security.md)
+- [Building an SPA](docs/building_an_spa.md)
 
-### Applying Migrations
+## Roadmap
 
-To apply pending migrations to your database:
-
-```bash
-python manage.py migrate
-```
-
-**What it does:**
--   Runs `alembic upgrade head`, applying all unapplied migrations to bring your database schema up to date.
-
-
-## 🐚 Interactive Shell
-
-Debug and interact with your application data using the IPython shell.
-
-```bash
-python manage.py shell
-```
-
-**Features:**
--   **Auto-Imports**: Automatically imports all your models, `settings`, and the database `engine`.
--   **Async Ready**: Pre-configured with `ipython` and `%autoawait`, so you can run `await` commands directly.
--   **Pre-loaded Session**: A fresh async `session` is available immediately for queries.
--   **Auto-commit Session**: Use `auto_session()` for automatic commit on success and rollback on error.
-
-**Example Usage:**
-
-```python
-# Using auto_session (auto-commits on success, rolls back on error):
-async with auto_session() as s:
-    new_item = await myapp.Item.objects(s).create(name="admin")
-
-# Using session (manual commit):
-items = await myapp.Item.objects(session).all()
-await session.commit()
-```
-
-
-## 🗺️ Roadmap
-
-Planned features for future releases:
-
-- [x] **Auth App** - JWT auth, signup, login, email verification, password reset, OAuth2
-- [x] **Email Backend** - Pluggable async email with console and SMTP backends
-- [x] **Task Queue (TaskIQ)** - Async task queue with Redis, retries, and cron scheduling
-- [ ] **Better documentation** - Cover all modules and utilities.
-- [x] **Basic Admin** - Simple admin interface for managing database records (inspired by Django Admin)
-- [ ] **Cookiecutter (or similar) Templates** - Project and micro-service initialization templates with cookiecutter for quick scaffolding
+- [x] Auth — JWT, email verification, password reset, OAuth2
+- [x] Email — Pluggable async backend with templates
+- [x] Task Queue — Redis-backed with retries and cron scheduling
+- [x] Admin Panel — Model registry, CRUD API, React frontend
+- [ ] Better documentation
+- [ ] Cookiecutter templates for project scaffolding

@@ -34,10 +34,15 @@ This creates:
 ```
 myapp/
 ├── __init__.py
-├── models.py      # SQLAlchemy models
-├── schemas.py     # Pydantic schemas
-├── views.py       # FastAPI routes
-└── tests.py
+├── models.py       # SQLAlchemy models
+├── schemas.py      # Pydantic schemas
+├── views.py        # FastAPI routes
+├── tasks.py        # TaskIQ async tasks
+├── tests/
+│   ├── __init__.py
+│   └── test_views.py
+└── utils/
+    └── __init__.py
 ```
 
 ---
@@ -101,7 +106,7 @@ python manage.py makemigrations
 ```
 
 Makemigrations will initialize Alembic and database and create a migration file in `migrations/versions/`.
-**Remeber to ALWAYS inspect the generated migrations before you run them.** Go to `migrations/versions/` and open the new migration file to inspect it.
+**Always inspect the generated migrations before running them.** Open the new file in `migrations/versions/` and review it.
 
 Apply the migrations:
 ```bash
@@ -128,7 +133,7 @@ Djast detects the rename and asks:
 Did you rename column 'content' to 'body' in table 'myapp_post'? [y/N]:
 ```
 
-Type `y`. Makemigrations will edit the migration file to rename the column instead of droping it and loose data.
+Type `y`. Makemigrations will generate a rename operation instead of dropping the column and losing data.
 
 ```bash
 python manage.py migrate
@@ -172,7 +177,7 @@ await myapp.Post.objects(session).filter(author_id=1)
 await myapp.Post.objects(session).count()
 ```
 
-### Ofcourse you can allways use SQLAlchemy queries
+### You can always use SQLAlchemy directly
 
 You're never locked in. Use raw SQLAlchemy anytime:
 
@@ -339,6 +344,7 @@ The server auto-reloads. Open `http://localhost:8000/docs` and test your endpoin
 | `python manage.py makemigrations` | Generate migrations |
 | `python manage.py migrate` | Apply migrations |
 | `python manage.py shell` | IPython shell |
+| `python manage.py createsuperuser` | Create an admin user |
 
 **Key features:**
 - `models.Model` gives you auto table names, `id` PK, `.objects()` manager, and `.get_schema()`

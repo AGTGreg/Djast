@@ -1,24 +1,28 @@
-**Email Backend**
+# Email
 
-This document explains how to configure and use the email backend. It covers settings, sending emails, using templates, attachments, and writing custom backends.
+This document covers email configuration, sending emails, using templates, attachments, and writing custom backends.
 
 **Files:** `app/djast/utils/email.py`, `app/djast/utils/email_backends/`, `app/djast/settings.py`
 
-**Quick summary:**
+---
+
+## Overview
+
 - Async-first email sending with pluggable backends.
 - Console backend for development (default), SMTP backend for production.
 - Jinja2 template support for HTML emails.
 - File attachments via `(filename, bytes, mimetype)` tuples.
+- Optional dispatch through the TaskIQ task queue.
 - Swap backends by changing one setting: `EMAIL_BACKEND`.
 
 ---
 
-**Configuration**
+## Configuration
 
 Add these to your environment (or `dev.env`):
 
 | Setting | Default | Description |
-|---|---|---|
+|---------|---------|-------------|
 | `EMAIL_BACKEND` | `djast.utils.email_backends.console.ConsoleEmailBackend` | Dotted path to the backend class |
 | `EMAIL_HOST` | `""` | SMTP server hostname |
 | `EMAIL_PORT` | `587` | SMTP port |
@@ -28,11 +32,12 @@ Add these to your environment (or `dev.env`):
 | `EMAIL_HOST_PASSWORD` | `""` | SMTP login password |
 | `DEFAULT_FROM_EMAIL` | `""` | Default sender address |
 | `EMAIL_TEMPLATE_DIR` | `""` | Path to Jinja2 email templates directory |
-| `EMAIL_USE_TASKIQ` | `False` | Route emails through the TaskIQ task queue (requires [TaskIQ setup](taskiq.md)). Attachments are not supported when enabled. |
+| `EMAIL_USE_TASKIQ` | `False` | Route emails through the TaskIQ task queue ([requires TaskIQ setup](taskiq.md)). Attachments not supported when enabled. |
 
-**Production SMTP example** (`dev.env`):
+### Production SMTP example
 
-```
+```bash
+# dev.env
 EMAIL_BACKEND=djast.utils.email_backends.smtp.SMTPEmailBackend
 EMAIL_HOST=smtp.example.com
 EMAIL_PORT=587
@@ -41,12 +46,12 @@ EMAIL_HOST_USER=noreply@example.com
 EMAIL_HOST_PASSWORD=your-password
 DEFAULT_FROM_EMAIL=noreply@example.com
 EMAIL_TEMPLATE_DIR=templates/email
-EMAIL_USE_TASKIQ=True          # optional — send emails via task queue (requires TaskIQ)
+EMAIL_USE_TASKIQ=True          # optional — send emails via task queue
 ```
 
 ---
 
-**Sending emails**
+## Sending Emails
 
 Import the convenience functions and `await` them:
 
@@ -89,7 +94,7 @@ await send_email(
 
 ---
 
-**Template emails**
+## Template Emails
 
 Create Jinja2 templates in your `EMAIL_TEMPLATE_DIR`:
 
@@ -116,7 +121,7 @@ Templates are autoescaped for HTML/XML to prevent XSS in email content.
 
 ---
 
-**Using EmailMessage directly**
+## Using EmailMessage Directly
 
 For more control, create an `EmailMessage` and send it through a backend:
 
@@ -139,16 +144,16 @@ success = await backend.send_message(message)
 
 ---
 
-**Built-in backends**
+## Built-in Backends
 
 | Backend | Class path | Use case |
-|---|---|---|
+|---------|------------|----------|
 | Console | `djast.utils.email_backends.console.ConsoleEmailBackend` | Development — prints emails to stdout |
 | SMTP | `djast.utils.email_backends.smtp.SMTPEmailBackend` | Production — sends via SMTP (uses fastapi-mail) |
 
 ---
 
-**Writing a custom backend**
+## Writing a Custom Backend
 
 Subclass `BaseEmailBackend` and implement `send_message`:
 
@@ -164,7 +169,7 @@ class MyBackend(BaseEmailBackend):
 
 Then set `EMAIL_BACKEND` to the dotted path of your class:
 
-```
+```bash
 EMAIL_BACKEND=myapp.utils.email_backend.MyBackend
 ```
 
