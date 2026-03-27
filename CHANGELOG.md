@@ -1,5 +1,16 @@
 # Changelog
 
+## 24-03-26
+ - **Added: Production deployment setup**: Self-contained Docker Compose production config (`docker-compose.prod.yml`) with Nginx reverse proxy (SSL termination, gzip, security headers, WebSocket/SSE proxying, static/media serving), PostgreSQL, Redis, Granian ASGI server, TaskIQ worker, and TaskIQ scheduler. All services include health checks, restart policies, and resource limits.
+ - **Added: Granian ASGI server**: Replaced `fastapi run` (Uvicorn) with Granian for production. Best-in-class WebSocket/SSE performance, worker crash recovery with crash loop detection, memory-based and lifetime-based worker recycling, built-in backpressure. (`app/Dockerfile`, `app/requirements.txt`)
+ - **Added: Health check endpoints**: `GET /health` (liveness — app is responding) and `GET /health/ready` (readiness — app + database + Redis reachable). Mounted at root level, outside `/api/v1` prefix and rate limiting. Returns 503 with per-service status when dependencies are down. (`djast/health.py`, `main.py`)
+ - **Added: Granian proxy headers support**: `wrap_asgi_with_proxy_headers` applied in production mode so `X-Forwarded-For` / `X-Forwarded-Proto` from Nginx are trusted. Configurable via `PROXY_TRUSTED_HOSTS` setting. (`main.py`, `djast/settings.py`)
+ - **Added: Nginx configuration**: Reverse proxy with SSL placeholder paths (`/etc/nginx/ssl/`), TLS 1.2+1.3, proxy headers, WebSocket upgrade support, SSE streaming (`proxy_buffering off`), static/media file serving with caching, gzip compression, security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy). (`nginx/nginx.conf`, `nginx/Dockerfile`)
+ - **Added: Production environment template** (`prod.env.example`): Documented template with PostgreSQL, Redis, SMTP email, CORS, proxy, and all security settings.
+ - **Added: `.dockerignore`** (`app/.dockerignore`): Excludes `__pycache__`, test artifacts, and SQLite databases from production Docker image.
+ - **Fixed: Dockerfile missing application code COPY**: Added `COPY . ${APP_HOME}` so production containers include app code without volume mounts. (`app/Dockerfile`)
+ - **Changed: `asyncpg` driver enabled by default**: PostgreSQL driver uncommented in `requirements.txt` for production use.
+
 ## 21-03-26
  - **Fixed: `NameError` in `auth/forms.py` when using email auth mode**: `LoginForm` referenced `OAuth2EmailRequestForm` before its definition. (`auth/forms.py`)
  - **Fixed: `get_or_create` / `update_or_create` rolled back entire transaction on conflict**: Replaced `session.rollback()` with `session.begin_nested()` savepoints so only the conflicting operation is rolled back. (`djast/db/models.py`)

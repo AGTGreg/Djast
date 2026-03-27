@@ -1,0 +1,132 @@
+services:
+
+  postgres:
+    image: "postgres:17-alpine"
+    expose:
+      - "5432"
+    env_file:
+      - prod.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-djast} -d ${POSTGRES_DB:-djast}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    image: "redis:8.0-alpine"
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  app:
+    build:
+      context: ./app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "8000"
+    env_file:
+      - prod.env
+    volumes:
+      - app_static:/vol/app/static
+      - app_media:/vol/app/media
+      - app_logs:/vol/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  taskiq-worker:
+    build:
+      context: ./app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - prod.env
+    volumes:
+      - app_static:/vol/app/static
+      - app_media:/vol/app/media
+      - app_logs:/vol/app/logs
+    command: ["taskiq", "worker", "djast.taskiq:broker", "djast.tasks"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  taskiq-scheduler:
+    build:
+      context: ./app
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - prod.env
+    volumes:
+      - app_static:/vol/app/static
+      - app_media:/vol/app/media
+      - app_logs:/vol/app/logs
+    command: ["taskiq", "scheduler", "djast.scheduler:scheduler"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  nginx:
+    build:
+      context: ./nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - app_static:/vol/app/static:ro
+      - app_media:/vol/app/media:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_static:
+  app_media:
+  app_logs:

@@ -21,6 +21,7 @@ It does **not** abstract away FastAPI or SQLAlchemy. You work with the same tool
 - **[Security](docs/security.md)** — Rate limiting, token blacklisting, brute-force protection, CSRF double-submit cookies
 - **Async SQLAlchemy** — SQLite for dev, PostgreSQL for production. Switch with an env var
 - **Dockerized** — `docker-compose.yaml` with app, Redis, TaskIQ worker, and scheduler
+- **[Production-Ready](docs/production-deployment.md)** — `docker-compose.prod.yml` with Granian ASGI server, Nginx (SSL, static files, WebSocket/SSE), PostgreSQL, Redis, health checks, and resource limits
 
 ## Quick Start
 
@@ -110,6 +111,7 @@ See `djast/settings.py` for the full list.
 - [Task Queue](docs/taskiq.md)
 - [Security](docs/security.md)
 - [Building an SPA](docs/building_an_spa.md)
+- [Production Deployment](docs/production-deployment.md)
 
 ## Roadmap
 
@@ -117,5 +119,6 @@ See `djast/settings.py` for the full list.
 - [x] Email — Pluggable async backend with templates
 - [x] Task Queue — Redis-backed with retries and cron scheduling
 - [x] Admin Panel — Model registry, CRUD API, React frontend
+- [x] Production configuration
 - [ ] Better documentation
 - [ ] Cookiecutter templates for project scaffolding

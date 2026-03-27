@@ -30,7 +30,10 @@ COPY ./requirements.txt ${APP_HOME}/requirements.txt
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
+# Copy application code
+COPY . ${APP_HOME}
+
 # Switch to our user
 USER appuser
 
-CMD [ "fastapi", "run", "main.py", "--host", "0.0.0.0", "--port", "8000" ]
+CMD ["granian", "main:app", "--interface", "asgi", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--loop", "uvloop"]

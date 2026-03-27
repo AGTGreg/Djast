@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/1"
     RATE_LIMIT_REDIS_URL: str = "redis://redis:6379/2"
 
+    # Proxy headers (Granian behind Nginx/reverse proxy)
+    # Trusted hosts for X-Forwarded-For / X-Forwarded-Proto headers.
+    # "*" is safe when the app port is not published to the host (only the
+    # reverse proxy can reach it). Restrict to a CIDR if the app port is
+    # exposed directly.
+    PROXY_TRUSTED_HOSTS: str = "*"
+
     # Auth & Security settings ================================================
     PASSWORD_HASHER: str = "pbkdf2_sha256"
     SECRET_KEY: str = "2+^*y!+gh)!w_ef$bn#*hal2tr#1+e_&iho)&c$fjs-u1n3=j6"

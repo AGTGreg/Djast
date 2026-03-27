@@ -42,9 +42,18 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.APP_PREFIX)
 
+    from djast.health import router as health_router
+    app.include_router(health_router)
+
     # Auto-discover and run setup_app() hooks from app modules.
     for hook in discover_setup_hooks():
         hook(app)
+
+    if not settings.DEBUG:
+        from granian.utils.proxies import wrap_asgi_with_proxy_headers
+        app = wrap_asgi_with_proxy_headers(
+            app, trusted_hosts=settings.PROXY_TRUSTED_HOSTS
+        )
 
     return app
 
