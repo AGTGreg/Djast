@@ -1,0 +1,59 @@
+# {{ project_name }}
+
+{{ project_description }}
+{% if author_name %}
+By **{{ author_name }}**
+{% endif %}
+## Quick Start
+
+```bash
+# Start the development server
+docker compose up --build
+
+# The API is available at http://localhost:8001/api/v1
+# Admin panel at http://localhost:8001/admin/
+```
+
+## Commands
+
+All commands run inside the Docker container:
+
+```bash
+docker compose exec app python manage.py startapp <name>       # Scaffold a new app
+docker compose exec app python manage.py makemigrations [msg]  # Generate a migration
+docker compose exec app python manage.py migrate               # Apply migrations
+docker compose exec app python manage.py shell                 # IPython shell
+docker compose exec app python manage.py createsuperuser       # Create an admin user
+docker compose exec app pytest -v                              # Run tests
+```
+
+## Project Structure
+
+```text
+app/
+├── djast/              # Core framework (settings, urls, db, commands)
+├── admin/              # Built-in admin panel
+├── auth/               # Built-in auth module
+├── templates/          # Email templates
+├── main.py             # ASGI entry point
+├── manage.py           # CLI
+└── requirements.txt    # Dependencies
+```
+
+## Documentation
+
+- [Quick Start](../quickstart.md)
+- [Models](../docs/models.md)
+- [Auth](../docs/auth.md)
+- [Admin Panel](../docs/admin.md)
+- [Email](../docs/email.md)
+- [Task Queue](../docs/taskiq.md)
+- [Security](../docs/security.md)
+- [Building an SPA](../docs/building_an_spa.md)
+- [Production Deployment](../docs/production-deployment.md)
+
+## Configuration
+
+All settings are in `app/djast/settings.py` and can be overridden via environment variables in `dev.env` (development) or `prod.env` (production).
+
+See `prod.env.example` for production configuration reference.

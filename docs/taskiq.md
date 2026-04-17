@@ -79,21 +79,20 @@ The scheduler is run as a separate process (see [Running Workers](#running-worke
 
 ## CPU-Bound Tasks
 
-For blocking or CPU-intensive work inside async tasks, use `run_in_executor`:
+For CPU-intensive work, define the task as a regular `def` (not `async def`) and run the worker with the `--use-process-pool` flag. TaskIQ will execute sync tasks in a separate process, keeping the event loop free:
 
 ```python
 from djast.taskiq import broker
-from djast.utils.tasks import run_in_executor
-
-
-def heavy_computation(data: str) -> str:
-    # CPU-intensive sync code
-    return data.upper() * 1000
 
 
 @broker.task
-async def process_data(data: str) -> str:
-    return await run_in_executor(heavy_computation, data)
+def heavy_computation(data: str) -> str:
+    # CPU-intensive sync code — runs in a process pool
+    return data.upper() * 1000
+```
+
+```bash
+taskiq worker djast.taskiq:broker myapp.tasks --use-process-pool --reload
 ```
 
 ## Retry Behaviour
