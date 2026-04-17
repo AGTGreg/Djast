@@ -29,7 +29,7 @@ It does **not** abstract away FastAPI or SQLAlchemy. You work with the same tool
 
 ```bash
 pip install copier
-copier copy gh:GregorioFranworko/Djast ./my-project --trust
+copier copy gh:AGTGreg/Djast ./my-project --trust
 ```
 
 You'll be prompted for:
