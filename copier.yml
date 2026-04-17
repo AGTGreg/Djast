@@ -1,0 +1,63 @@
+_min_copier_version: "9.0.0"
+_templates_suffix: ".jinja"
+
+_exclude:
+  - "CHANGELOG.md"
+  - "LICENSE.md"
+  - ".claude/"
+  - ".specs/"
+  - "Makefile"
+  - "__pycache__/"
+  - "*.pyc"
+  - "*.sqlite3"
+  - "migrations/"
+  - "alembic.ini"
+  - "node_modules/"
+  - ".superpowers"
+  - "copier.yml"
+  - "/README.md"
+  - "/docs"
+  - "/quickstart.md"
+  # Root .gitignore only (leading / = root-relative);
+  # the project .gitignore inside {{ project_pascal }}/ is preserved
+  - "/.gitignore"
+  - ".git/"
+
+_tasks:
+  - "python3 {{ project_pascal }}/_generate_secrets.py && rm {{ project_pascal }}/_generate_secrets.py"
+
+# Questions
+project_name:
+  type: str
+  help: "Your project's human-readable name (e.g., 'My App')"
+  default: "My Project"
+
+project_slug:
+  type: str
+  help: "Project slug used for database names and identifiers"
+  default: "{{ project_name | lower | replace(' ', '_') | replace('-', '_') }}"
+  when: false
+
+project_pascal:
+  type: str
+  help: "PascalCase project folder name"
+  default: "{{ project_name | title | replace(' ', '') | replace('-', '') | replace('_', '') }}"
+  when: false
+
+project_description:
+  type: str
+  help: "A short description of your project"
+  default: "A web application built with Djast"
+
+author_name:
+  type: str
+  help: "Author name"
+  default: ""
+
+auth_user_model:
+  type: str
+  help: "Authentication user model type"
+  choices:
+    - "django"
+    - "email"
+  default: "django"

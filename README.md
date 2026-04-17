@@ -25,6 +25,31 @@ It does **not** abstract away FastAPI or SQLAlchemy. You work with the same tool
 
 ## Quick Start
 
+### Create a new project
+
+```bash
+pip install copier
+copier copy gh:GregorioFranworko/Djast ./my-project --trust
+```
+
+You'll be prompted for:
+
+| Prompt | Description | Default |
+|--------|-------------|---------|
+| `project_name` | Human-readable project name | `My Project` |
+| `project_description` | Short description | `A web application built with Djast` |
+| `author_name` | Author name | — |
+| `auth_user_model` | `django` (username) or `email` (email-based auth) | `django` |
+
+Copier generates a project folder (PascalCase) with a unique `SECRET_KEY` and `DB_PASSWORD` in `dev.env`, ready to run:
+
+```bash
+cd my-project/MyProject
+docker compose up --build
+```
+
+### Learn more
+
 [Follow the quick start guide](quickstart.md) to build a working API in 10 minutes.
 
 ## Project Structure
@@ -120,5 +145,5 @@ See `djast/settings.py` for the full list.
 - [x] Task Queue — Redis-backed with retries and cron scheduling
 - [x] Admin Panel — Model registry, CRUD API, React frontend
 - [x] Production configuration
-- [ ] Better documentation
-- [ ] Cookiecutter templates for project scaffolding
+- [x] Better documentation
+- [x] Copier template for project scaffolding
