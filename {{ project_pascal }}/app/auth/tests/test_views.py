@@ -1,11 +1,9 @@
 import pytest
 import pytest_asyncio
-import importlib
 import asyncio
 import secrets
 from datetime import timedelta
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.orm import clear_mappers
 from ulid import ULID
 
 import auth.forms
@@ -14,10 +12,8 @@ import auth.views
 import auth.schemas
 import auth.utils.auth_backend
 import auth.utils.oauth
-import djast.urls
 import main
 from djast.settings import settings
-from djast.db.models import Base
 from djast.utils import timezone as dj_timezone
 
 from auth.tests.helpers import (

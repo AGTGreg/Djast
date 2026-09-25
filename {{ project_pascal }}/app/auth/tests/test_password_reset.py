@@ -1,21 +1,12 @@
 import pytest
-import pytest_asyncio
-import importlib
 import secrets
 from unittest.mock import patch, AsyncMock
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.orm import clear_mappers
+from httpx import AsyncClient
 
 import auth.forms
 import auth.models
 import auth.views
 import auth.schemas
-import auth.utils.auth_backend
-import auth.utils.oauth
-import djast.urls
-import main
-from djast.settings import settings
-from djast.db.models import Base
 
 from auth.tests.helpers import (
     auth_prefix as _auth_prefix,
