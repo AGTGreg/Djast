@@ -109,7 +109,14 @@ services:
       - app_static:/vol/app/static
       - app_media:/vol/app/media
       - app_logs:/vol/app/logs
-    command: ["taskiq", "worker", "djast.taskiq:broker", "djast.tasks"]
+    environment:
+      # taskiq strips the working directory from sys.path once its own
+      # imports finish, so a lazy import inside a task body fails without this.
+      PYTHONPATH: /app
+    # --fs-discover imports every <app>/tasks.py. Without it only djast.tasks
+    # is loaded and app tasks are silently never registered.
+    command: ["taskiq", "worker", "djast.taskiq:broker",
+              "--fs-discover", "--tasks-pattern", "*/tasks.py", "djast.tasks"]
     restart: unless-stopped
     deploy:
       resources:
@@ -128,7 +135,10 @@ services:
       - app_static:/vol/app/static
       - app_media:/vol/app/media
       - app_logs:/vol/app/logs
-    command: ["taskiq", "scheduler", "djast.scheduler:scheduler"]
+    environment:
+      PYTHONPATH: /app
+    command: ["taskiq", "scheduler", "djast.scheduler:scheduler",
+              "--fs-discover", "--tasks-pattern", "*/tasks.py", "djast.tasks"]
     restart: unless-stopped
     deploy:
       resources:
