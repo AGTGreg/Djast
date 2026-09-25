@@ -6,6 +6,7 @@ and the decorator API for registering models with the admin panel.
 """
 from __future__ import annotations
 
+import enum
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -85,7 +86,17 @@ def _resolve_admin_type(col: ColumnMeta, admin_config: ModelAdmin) -> str:
     if col.name == "email" and col.python_type is str:
         return "email"
 
+    if isinstance(col.python_type, type) and issubclass(col.python_type, enum.Enum):
+        return "select"
+
     return _PYTHON_TYPE_MAP.get(col.python_type, "string")
+
+
+def _enum_options(col: ColumnMeta) -> list[str] | None:
+    """Choices for an Enum column, or None when the column is not an Enum."""
+    if isinstance(col.python_type, type) and issubclass(col.python_type, enum.Enum):
+        return [member.value for member in col.python_type]
+    return None
 
 
 def _get_pk_names(model_class: type) -> tuple[str, ...]:
@@ -117,7 +128,10 @@ def _introspect_fields(
             editable=editable,
             required=not col.primary_key and not col.nullable,
             default=col.default_value,
-            options=(admin_config.field_options or {}).get(col.name),
+            options=(
+                (admin_config.field_options or {}).get(col.name)
+                or _enum_options(col)
+            ),
         ))
 
     return fields
