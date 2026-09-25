@@ -13,15 +13,16 @@ It does **not** abstract away FastAPI or SQLAlchemy. You work with the same tool
 - **Django-style CLI** — `startapp`, `makemigrations`, `migrate`, `shell`, `createsuperuser`
 - **Django-style project layout** — Modular apps with `models.py`, `views.py`, `schemas.py`, `utils/`, `tests/`
 - **Django-style ORM** — `Model.objects(session).get()`, `.filter()`, `.create()` and more
-- **[Admin Panel](docs/admin.md)** — Model registry, CRUD API, React frontend. Register models and get a working admin at `/admin/`
-- **[Auth](docs/auth.md)** — Django-compatible user model with `pbkdf2_sha256` hashing, JWT access/refresh tokens, signup, login, email verification, password reset, CSRF protection, brute-force lockout. Works with existing Django databases out of the box
-- **[OAuth2](docs/auth.md)** — Optional Google & GitHub social login, disabled by default
-- **[Email](docs/email.md)** — Pluggable async backend (console for dev, SMTP for production) with Jinja2 templates
-- **[Task Queue](docs/taskiq.md)** — Redis-backed async tasks with retries, cron scheduling, and optional email dispatch
-- **[Security](docs/security.md)** — Rate limiting, token blacklisting, brute-force protection, CSRF double-submit cookies
-- **Async SQLAlchemy** — SQLite for dev, PostgreSQL for production. Switch with an env var
+- **[Admin Panel]({{ project_pascal }}/docs/admin.md)** — Model registry, CRUD API, React frontend. Register models and get a working admin at `/admin/`
+- **[Auth]({{ project_pascal }}/docs/auth.md)** — Django-compatible user model with `pbkdf2_sha256` hashing, JWT access/refresh tokens, signup, login, email verification, password reset, CSRF protection, brute-force lockout. Works with existing Django databases out of the box
+- **[OAuth2]({{ project_pascal }}/docs/auth.md)** — Optional Google & GitHub social login, disabled by default
+- **[Email]({{ project_pascal }}/docs/email.md)** — Pluggable async backend (console for dev, SMTP for production) with Jinja2 templates
+- **[Task Queue]({{ project_pascal }}/docs/taskiq.md)** — Redis-backed async tasks with retries, cron scheduling, and optional email dispatch
+- **[Security]({{ project_pascal }}/docs/security.md)** — Rate limiting, token blacklisting, brute-force protection, CSRF double-submit cookies
+- **Async SQLAlchemy** — PostgreSQL by default in dev and production, SQLite available with one env var
+- **[Testing]({{ project_pascal }}/docs/testing.md)** — pytest fixtures for app, database and auth, with the suite runnable against PostgreSQL
 - **Dockerized** — `docker-compose.yaml` with app, Redis, TaskIQ worker, and scheduler
-- **[Production-Ready](docs/production-deployment.md)** — `docker-compose.prod.yml` with Granian ASGI server, Nginx (SSL, static files, WebSocket/SSE), PostgreSQL, Redis, health checks, and resource limits
+- **[Production-Ready]({{ project_pascal }}/docs/production-deployment.md)** — `docker-compose.prod.yml` with Granian ASGI server, Nginx (SSL, static files, WebSocket/SSE), PostgreSQL, Redis, health checks, and resource limits
 
 ## Quick Start
 
@@ -50,7 +51,7 @@ docker compose up --build
 
 ### Learn more
 
-[Follow the quick start guide](quickstart.md) to build a working API in 10 minutes.
+[Follow the quick start guide]({{ project_pascal }}/quickstart.md) to build a working API in 10 minutes.
 
 ## Project Structure
 
@@ -108,7 +109,7 @@ ItemRead = Item.get_schema()
 ItemCreate = Item.get_schema(exclude={"id", "created_at", "updated_at"})
 ```
 
-For more details, see [Models documentation](docs/models.md).
+For more details, see [Models documentation]({{ project_pascal }}/docs/models.md).
 
 ## Settings
 
@@ -128,15 +129,16 @@ See `djast/settings.py` for the full list.
 
 ## Documentation
 
-- [Quick Start](quickstart.md)
-- [Models](docs/models.md)
-- [Auth](docs/auth.md)
-- [Admin Panel](docs/admin.md)
-- [Email](docs/email.md)
-- [Task Queue](docs/taskiq.md)
-- [Security](docs/security.md)
-- [Building an SPA](docs/building_an_spa.md)
-- [Production Deployment](docs/production-deployment.md)
+- [Quick Start]({{ project_pascal }}/quickstart.md)
+- [Models]({{ project_pascal }}/docs/models.md)
+- [Auth]({{ project_pascal }}/docs/auth.md)
+- [Admin Panel]({{ project_pascal }}/docs/admin.md)
+- [Email]({{ project_pascal }}/docs/email.md)
+- [Task Queue]({{ project_pascal }}/docs/taskiq.md)
+- [Security]({{ project_pascal }}/docs/security.md)
+- [Testing]({{ project_pascal }}/docs/testing.md)
+- [Building an SPA]({{ project_pascal }}/docs/building_an_spa.md)
+- [Production Deployment]({{ project_pascal }}/docs/production-deployment.md)
 
 ## Roadmap
 

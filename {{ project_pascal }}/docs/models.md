@@ -210,7 +210,9 @@ author = await session.get(Author, 1)
 
 ## Database Configuration
 
-The database engine is configured in `djast/settings.py` via the `DATABASES` setting. It defaults to a local SQLite file for development. Switch to PostgreSQL by setting environment variables:
+The database engine is configured in `djast/settings.py` via the `DATABASES` setting, read from environment variables. **A generated project ships with PostgreSQL configured in `dev.env`** — the same engine production runs, so you develop against the database you deploy on.
+
+The settings defaults fall back to a local SQLite file, which is what you get if no environment is loaded at all. To use SQLite deliberately, set `DB_ENGINE="sqlite"` in `dev.env`. To point at a different PostgreSQL:
 
 ```bash
 DB_ENGINE=postgresql
@@ -222,3 +224,38 @@ DB_PASSWORD=mypassword
 ```
 
 The engine is built once at startup in `djast/database.py`. SQLite uses `aiosqlite`, PostgreSQL uses `asyncpg`. Both are fully async.
+
+---
+
+## Enum Columns
+
+SQLAlchemy has two defaults here that surprise people coming from Django's `choices`. Both are worth knowing before you write the migration.
+
+```python
+import enum
+from sqlalchemy import Enum
+
+class Role(enum.StrEnum):
+    CLIENT = "client"
+    ADMIN = "admin"
+
+class Membership(models.Model):
+    __tablename__ = "orgs_membership"
+
+    role: Mapped[Role] = mapped_column(
+        Enum(
+            Role,
+            native_enum=False,
+            length=16,
+            create_constraint=True,                        # 1
+            values_callable=lambda c: [m.value for m in c],  # 2
+        ),
+        default=Role.CLIENT,
+    )
+```
+
+1. **`create_constraint` defaults to `False`** (since SQLAlchemy 1.4). Without it the column is a plain `VARCHAR` with **no** CHECK constraint — `makemigrations` reports success and the generated migration looks right. Verify with `SELECT conname FROM pg_constraint WHERE conrelid = 'orgs_membership'::regclass;` if you care.
+
+2. **SQLAlchemy persists enum member *names*, not values.** A `StrEnum` whose values are lowercase stores `'CLIENT'`, not `'client'`. Anything reading the column outside the ORM — a report, an export, a raw query — will expect the values. `values_callable` fixes that.
+
+The admin panel reads the enum directly: an `Enum` column renders as a select with the member values as options, no `field_options` needed. See [Admin Panel](admin.md).

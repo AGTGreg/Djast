@@ -58,6 +58,12 @@ class ArticleAdmin(ModelAdmin):
 | `exclude_fields` | `set[str]` | Fields hidden from the admin entirely |
 | `field_options` | `dict[str, list[str]]` | Renders a field as a select dropdown with the given options |
 
+### Field types
+
+Field widgets are derived from the column type: `integer`, `string`, `boolean`, `decimal`, `datetime`, `email` (any column named `email`), and `select`.
+
+A column typed with a Python `Enum` becomes a `select` automatically, with the enum's member values as its options — you do not need `field_options` for it. Setting `field_options` for that column still wins, so you can narrow the choices the admin offers without changing the model. See [Enum Columns](models.md#enum-columns).
+
 ### User model handling
 
 User models (`AbstractBaseUser` subclasses) are handled specially:

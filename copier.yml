@@ -2,8 +2,11 @@ _min_copier_version: "9.0.0"
 _templates_suffix: ".jinja"
 
 _exclude:
-  - "CHANGELOG.md"
-  - "LICENSE.md"
+  # Leading / = root-relative. The framework's own CHANGELOG stays behind;
+  # {{ project_pascal }}/CHANGELOG.md ships as the generated project's seed,
+  # because CLAUDE.md tells developers to keep it up to date.
+  - "/CHANGELOG.md"
+  - "/LICENSE.md"
   - ".claude/"
   - ".specs/"
   - "Makefile"
@@ -16,8 +19,9 @@ _exclude:
   - ".superpowers"
   - "copier.yml"
   - "/README.md"
-  - "/docs"
-  - "/quickstart.md"
+  # docs/ and quickstart.md live inside {{ project_pascal }}/ so they ship with
+  # every generated project: CLAUDE.md points at them, and an agent working in
+  # the project needs to be able to read them.
   # Root .gitignore only (leading / = root-relative);
   # the project .gitignore inside {{ project_pascal }}/ is preserved
   - "/.gitignore"

@@ -46,6 +46,34 @@ Generate a strong `SECRET_KEY`:
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
+### The app refuses to start on a template secret
+
+`SECRET_KEY` and `DB_PASSWORD` have known values that ship with the template —
+the default in `djast/settings.py`, the `CHANGE-ME-...` placeholders in
+`prod.env.example`, and the `GENERATE_ME` markers in `dev.env` before Copier
+rewrites them. All of them are public by construction.
+
+Djast rejects them at startup:
+
+```
+ValueError: SECRET_KEY is still a value that ships with the Djast template,
+so it is public. Set a unique SECRET_KEY before starting.
+Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+Two things about this check are deliberate:
+
+- **It looks at the value, not at whether the variable was set.** A deployment
+  that re-set `SECRET_KEY` to this exact string is equally compromised.
+- **It is not gated on `DEBUG`.** `DEBUG` defaults to `true`, so a container
+  started without an env file would skip a `DEBUG`-gated check — which is
+  precisely the case worth catching.
+
+`copier copy` generates a unique `SECRET_KEY` and `DB_PASSWORD` into `dev.env`
+for you. **`prod.env` is yours to fill in** — it is created by hand from
+`prod.env.example` and nothing generates its secrets. See
+[Production Deployment](production-deployment.md).
+
 ---
 
 ## Authentication Security
@@ -274,14 +302,14 @@ All settings are in `app/djast/settings.py`, overridable via environment variabl
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DEBUG` | `true` | Development mode — controls cookies, CORS, logging |
-| `SECRET_KEY` | *(hardcoded dev value)* | JWT signing key. **Must be unique and secret in production** |
+| `SECRET_KEY` | *(template value — rejected at startup)* | JWT signing key. Must be unique and secret; the app refuses to start while it is a template default |
 | `CSRF_COOKIE_NAME` | `"csrf_token"` | Name of the CSRF cookie |
 | `CSRF_HEADER_NAME` | `"X-CSRF-Token"` | Expected header name for CSRF token |
 | `CSRF_TOKEN_LENGTH` | `32` | Byte length of generated CSRF tokens |
 | `ACCOUNT_LOGIN_MAX_ATTEMPTS` | `5` | Failed logins before lockout (0 = disabled) |
 | `ACCOUNT_LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration in seconds |
 | `ACCOUNT_LOGIN_LOCKOUT_FAIL_OPEN` | `true` | Allow login when Redis is unavailable |
-| `FALLBACK_IS_BLACKLISTED` | `true` | Treat tokens as blacklisted when Redis is down |
+| `FALLBACK_IS_BLACKLISTED` | `true` | Treat tokens as blacklisted when Redis is down (fails closed, and logs a warning naming the failure) |
 | `PASSWORD_VALIDATION_REGEX` | *(8-100 chars, mixed case, digit, special)* | Password strength regex |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access token lifetime |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime |
