@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 
 # OAuth state token TTL in seconds
 _OAUTH_STATE_TTL = 300  # 5 minutes
+def _status_suffix(exc: Exception) -> str:
+    """HTTP status of a failed request, when there is one.
+
+    Log this instead of ``str(exc)``. An httpx error's text carries the request
+    URL and an Authlib ``OAuthError``'s text is chosen by the provider; neither
+    belongs in a line somebody may paste into a ticket.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return f" (HTTP {status})" if status is not None else ""
+
+
 _OAUTH_STATE_PREFIX = "oauth_state:"
 _OAUTH_CODE_PREFIX = "oauth_code:"
 
@@ -259,7 +270,10 @@ async def handle_callback(
             redirect_uri=callback_url,
         )
     except Exception as exc:
-        logger.error(f"OAuth code exchange failed for {provider}: {exc}")
+        logger.error(
+            "OAuth code exchange failed for %s: %s%s",
+            provider, type(exc).__name__, _status_suffix(exc),
+        )
         raise auth_exceptions.OAuthError("OAuth authentication failed.")
 
     provider_access_token = token.get("access_token", "")
@@ -273,7 +287,10 @@ async def handle_callback(
     except auth_exceptions.OAuthError:
         raise
     except Exception as exc:
-        logger.error(f"OAuth profile fetch failed for {provider}: {exc}")
+        logger.error(
+            "OAuth profile fetch failed for %s: %s%s",
+            provider, type(exc).__name__, _status_suffix(exc),
+        )
         raise auth_exceptions.OAuthError("OAuth authentication failed.")
 
     return await get_or_create_oauth_user(
