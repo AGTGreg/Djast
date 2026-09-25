@@ -11,13 +11,24 @@ def run() -> None:
     alembic_ini = ROOT_DIR / "alembic.ini"
     migrations_dir = ROOT_DIR / "migrations"
 
+    # These must raise, not return. A bare return exits 0, which tells every
+    # caller -- entrypoint script, deploy gate, CI step -- that the migration
+    # succeeded, and the app then boots against an unmigrated database.
     if not alembic_ini.exists():
-        print("Alembic not initialized. Run makemigrations first.")
-        return
+        raise SystemExit(
+            "Alembic is not initialized: alembic.ini not found.\n"
+            "In a container this usually means it was excluded from the image "
+            "(check .dockerignore).\n"
+            "In a new project, run `python manage.py makemigrations` first."
+        )
 
     if not migrations_dir.exists():
-        print("Error: migrations/ directory not found. Run makemigrations first.")
-        return
+        raise SystemExit(
+            "migrations/ directory not found.\n"
+            "In a container this usually means it was excluded from the image "
+            "(check .dockerignore) or never committed (check .gitignore).\n"
+            "In a new project, run `python manage.py makemigrations` first."
+        )
 
     print("Running migrations...")
     alembic_cfg = Config(str(alembic_ini))

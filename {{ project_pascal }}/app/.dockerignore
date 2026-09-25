@@ -8,5 +8,11 @@ __pycache__/
 htmlcov/
 *.egg-info/
 .mypy_cache/
-migrations/
-alembic.ini
+# migrations/ and alembic.ini must ship in the image -- the container runs
+# `manage.py migrate` on deploy. Excluding them makes migrate a no-op.
+
+# Frontend build tooling: the served bundle is admin/frontend/build_output,
+# which stays. node_modules and the Vite cache do not belong in the image.
+admin/frontend/node_modules/
+admin/frontend/.vite/
+
