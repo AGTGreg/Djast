@@ -1,81 +1,40 @@
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from djast.settings import settings
-import auth.forms
-import auth.models
-import auth.schemas
-import auth.utils.auth_backend
-import auth.utils.oauth
-import auth.views
-import djast.urls
+
 import main
-import importlib
-from sqlalchemy.orm import clear_mappers
-from djast.db.models import Base
+from djast.database import get_async_session
+from djast.settings import settings
 
 from auth.tests.helpers import auth_prefix as _auth_prefix
 
 
 @pytest_asyncio.fixture(scope="function")
-async def rate_limit_client(db_engine, db_session):
+async def rate_limit_client(db_session, schema, auth_mode):
+    """App + HTTP client with rate limiting enabled.
+
+    Skips under email auth: these tests post ``username``-based login payloads.
+    Redis cleanup is handled by the autouse ``redis_cleanup`` fixture.
     """
-    Fixture that sets up the app with rate limiting enabled.
+    if auth_mode != "django":
+        pytest.skip("Rate-limit tests post username-based login payloads")
 
-    Pins ``AUTH_USER_MODEL_TYPE`` to ``django`` because these tests post
-    ``username``-based login payloads; without this, running the file in
-    isolation fails when the env default is ``email``. Redis cleanup is
-    handled by the autouse ``redis_cleanup`` fixture in ``conftest.py``.
-    """
-    # Reset settings to defaults
-    settings.AUTH_RATE_LIMIT_SIGNUP = "5/minute"
-    settings.AUTH_RATE_LIMIT_LOGIN = "5/minute"
-    settings.AUTH_RATE_LIMIT_REFRESH = "20/minute"
-    settings.AUTH_RATE_LIMIT_CHANGE_PASSWORD = "3/minute"
-    settings.AUTH_RATE_LIMIT_REVOKE = "20/minute"
-    settings.AUTH_RATE_LIMIT_USER_ME = "100/minute"
-    settings.AUTH_USER_MODEL_TYPE = "django"
-
-    # Reload rate_limit module to get a fresh Limiter instance
-    import djast.rate_limit
-    importlib.reload(djast.rate_limit)
-
-    # Ensure limiter is enabled (on the new instance)
+    # The limits themselves are baked into the route decorators at import time
+    # (``@limiter.limit(settings.AUTH_RATE_LIMIT_LOGIN)``), so they cannot be
+    # changed from here -- reloading the module would only build a second
+    # Limiter that the already-built app does not use. Toggling ``enabled`` on
+    # the instance the app holds is the part that works.
     from djast.rate_limit import limiter
     limiter.enabled = True
 
-    clear_mappers()
-    Base.metadata.clear()
-
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
-    importlib.reload(auth.schemas)
-    importlib.reload(auth.utils.auth_backend)
-    importlib.reload(auth.utils.oauth)
-    importlib.reload(auth.views)
-    importlib.reload(djast.urls)
-    importlib.reload(main)
-
     app = main.app
-    from djast.database import get_async_session
     app.dependency_overrides[get_async_session] = lambda: db_session
-
-    # Create tables
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as c:
         yield c
 
     app.dependency_overrides.clear()
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    settings.AUTH_USER_MODEL_TYPE = "django"
-    clear_mappers()
-    Base.metadata.clear()
-    importlib.reload(auth.models)
+    await db_session.rollback()
 
 
 def _strong_password() -> str:

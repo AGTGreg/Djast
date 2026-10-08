@@ -24,7 +24,29 @@ docker compose exec app python manage.py makemigrations [msg]  # Generate a migr
 docker compose exec app python manage.py migrate               # Apply migrations
 docker compose exec app python manage.py shell                 # IPython shell
 docker compose exec app python manage.py createsuperuser       # Create an admin user
-docker compose exec app pytest -v                              # Run tests
+docker compose exec app python -m pytest                       # Run tests
+```
+
+### Running the tests
+
+`AUTH_USER_MODEL_TYPE` fixes the shape of the `User` model when it is imported,
+so a pytest process runs under one auth mode. Run the suite once per mode:
+
+```bash
+docker compose exec app python -m pytest
+docker compose exec -e AUTH_USER_MODEL_TYPE=email app python -m pytest
+```
+
+The default test database is in-memory SQLite. Before calling a database change
+done, run against PostgreSQL — teardown deadlocks, stale table shapes and
+foreign-key ordering bugs are invisible on SQLite:
+
+```bash
+docker compose exec db psql -U "$DB_USER" -d "$DB_NAME" \
+    -c "CREATE DATABASE test_db OWNER $DB_USER;"
+docker compose exec \
+    -e TEST_DATABASE_URL="postgresql+asyncpg://$DB_USER:$DB_PASSWORD@db:5432/test_db" \
+    app python -m pytest
 ```
 
 ## Project Structure
@@ -42,18 +64,46 @@ app/
 
 ## Documentation
 
-- [Quick Start](../quickstart.md)
-- [Models](../docs/models.md)
-- [Auth](../docs/auth.md)
-- [Admin Panel](../docs/admin.md)
-- [Email](../docs/email.md)
-- [Task Queue](../docs/taskiq.md)
-- [Security](../docs/security.md)
-- [Building an SPA](../docs/building_an_spa.md)
-- [Production Deployment](../docs/production-deployment.md)
+Djast's documentation ships with this project, in `docs/`. It describes the
+framework version this project was generated from.
+
+- [Quick Start](quickstart.md)
+- [Models](docs/models.md)
+- [Auth](docs/auth.md)
+- [Admin Panel](docs/admin.md)
+- [Email](docs/email.md)
+- [Task Queue](docs/taskiq.md)
+- [Security](docs/security.md)
+- [Testing](docs/testing.md)
+- [Building an SPA](docs/building_an_spa.md)
+- [Production Deployment](docs/production-deployment.md)
 
 ## Configuration
 
 All settings are in `app/djast/settings.py` and can be overridden via environment variables in `dev.env` (development) or `prod.env` (production).
 
 See `prod.env.example` for production configuration reference.
+
+`copier copy` generated a unique `SECRET_KEY` and `DB_PASSWORD` into `dev.env`.
+**`prod.env` is yours to fill in** — nothing generates its secrets. The app
+refuses to start while `SECRET_KEY` or `DB_PASSWORD` still holds a value that
+ships with the template.
+
+## Migrations
+
+`migrations/` and `alembic.ini` are tracked by this repository on purpose: a
+production deploy runs `manage.py migrate` and never `makemigrations`, so the
+migration history has to travel with the code. Do not add them to `.gitignore`
+or `.dockerignore`.
+
+## Background tasks
+
+Define tasks in `<app>/tasks.py`. The worker discovers every one of them
+(`--fs-discover --tasks-pattern "*/tasks.py"` in the compose files) — a task
+defined anywhere else is never registered, and enqueuing it succeeds silently.
+After adding an app with tasks, confirm once:
+
+```bash
+docker compose logs taskiq-worker | grep Importing
+```
+

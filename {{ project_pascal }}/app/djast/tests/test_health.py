@@ -1,36 +1,23 @@
-import importlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.orm import clear_mappers
 
 import main
-import djast.urls
-from djast.db.models import Base
+from djast.database import get_async_session
 from djast.settings import settings
 
 
 @pytest_asyncio.fixture(scope="function")
-async def health_client(db_engine):
+async def health_client(db_engine, schema):
     """Set up the app with a test database for health checks."""
     test_session_factory = async_sessionmaker(
         db_engine, expire_on_commit=False
     )
 
-    clear_mappers()
-    Base.metadata.clear()
-
-    importlib.reload(djast.urls)
-    importlib.reload(main)
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     app = main.app
-    from djast.database import get_async_session
 
     async def _override_session():
         async with test_session_factory() as session:
@@ -46,12 +33,6 @@ async def health_client(db_engine):
             yield client
 
     app.dependency_overrides.clear()
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    clear_mappers()
-    Base.metadata.clear()
 
 
 @pytest.mark.asyncio

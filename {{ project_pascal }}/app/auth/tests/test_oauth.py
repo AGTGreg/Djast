@@ -1,22 +1,13 @@
 """Tests for OAuth2 social login (Google and GitHub)."""
 import pytest
 import pytest_asyncio
-import importlib
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.orm import clear_mappers
 
-import auth.forms
-import auth.models
-import auth.views
-import auth.schemas
-import auth.utils.auth_backend
-import auth.utils.oauth
-import djast.urls
 import main
+from djast.database import get_async_session
 from djast.settings import settings
-from djast.db.models import Base
 
 from auth.tests.helpers import (
     auth_prefix as _auth_prefix,
@@ -44,15 +35,17 @@ GITHUB_EMAILS = [
 ]
 
 
-@pytest_asyncio.fixture(params=["django", "email"])
-async def oauth_client(request, db_engine, db_session):
-    """Set up the app with OAuth enabled for testing."""
-    mode = request.param
-    settings.AUTH_USER_MODEL_TYPE = mode
+@pytest_asyncio.fixture
+async def oauth_client(db_session, schema, auth_mode):
+    """App + HTTP client with OAuth enabled.
 
-    # Enable OAuth providers for testing
-    original_google = settings.OAUTH_GOOGLE_ENABLED
-    original_github = settings.OAUTH_GITHUB_ENABLED
+    ``is_provider_enabled`` reads settings at call time, so flipping the
+    settings is enough -- nothing needs reimporting.
+    """
+    original = (
+        settings.OAUTH_GOOGLE_ENABLED,
+        settings.OAUTH_GITHUB_ENABLED,
+    )
     settings.OAUTH_GOOGLE_ENABLED = True
     settings.OAUTH_GITHUB_ENABLED = True
     settings.OAUTH_GOOGLE_CLIENT_ID = "test-google-client-id"
@@ -63,23 +56,7 @@ async def oauth_client(request, db_engine, db_session):
     from djast.rate_limit import limiter
     limiter.enabled = False
 
-    clear_mappers()
-    Base.metadata.clear()
-
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
-    importlib.reload(auth.schemas)
-    importlib.reload(auth.utils.auth_backend)
-    importlib.reload(auth.utils.oauth)
-    importlib.reload(auth.views)
-    importlib.reload(djast.urls)
-    importlib.reload(main)
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     app = main.app
-    from djast.database import get_async_session
     app.dependency_overrides[get_async_session] = lambda: db_session
 
     async with AsyncClient(
@@ -87,51 +64,27 @@ async def oauth_client(request, db_engine, db_session):
         base_url="https://test",
         follow_redirects=False,
     ) as c:
-        yield c, mode
+        yield c, auth_mode
 
     app.dependency_overrides.clear()
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    # Restore settings
-    settings.OAUTH_GOOGLE_ENABLED = original_google
-    settings.OAUTH_GITHUB_ENABLED = original_github
-    settings.AUTH_USER_MODEL_TYPE = "django"
-    clear_mappers()
-    Base.metadata.clear()
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
+    await db_session.rollback()
+    settings.OAUTH_GOOGLE_ENABLED, settings.OAUTH_GITHUB_ENABLED = original
 
 
-@pytest_asyncio.fixture(params=["django", "email"])
-async def oauth_disabled_client(request, db_engine, db_session):
-    """Set up the app with OAuth disabled for testing."""
-    mode = request.param
-    settings.AUTH_USER_MODEL_TYPE = mode
+@pytest_asyncio.fixture
+async def oauth_disabled_client(db_session, schema, auth_mode):
+    """App + HTTP client with both OAuth providers disabled."""
+    original = (
+        settings.OAUTH_GOOGLE_ENABLED,
+        settings.OAUTH_GITHUB_ENABLED,
+    )
     settings.OAUTH_GOOGLE_ENABLED = False
     settings.OAUTH_GITHUB_ENABLED = False
 
     from djast.rate_limit import limiter
     limiter.enabled = False
 
-    clear_mappers()
-    Base.metadata.clear()
-
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
-    importlib.reload(auth.schemas)
-    importlib.reload(auth.utils.auth_backend)
-    importlib.reload(auth.utils.oauth)
-    importlib.reload(auth.views)
-    importlib.reload(djast.urls)
-    importlib.reload(main)
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     app = main.app
-    from djast.database import get_async_session
     app.dependency_overrides[get_async_session] = lambda: db_session
 
     async with AsyncClient(
@@ -139,18 +92,11 @@ async def oauth_disabled_client(request, db_engine, db_session):
         base_url="https://test",
         follow_redirects=False,
     ) as c:
-        yield c, mode
+        yield c, auth_mode
 
     app.dependency_overrides.clear()
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    settings.AUTH_USER_MODEL_TYPE = "django"
-    clear_mappers()
-    Base.metadata.clear()
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
+    await db_session.rollback()
+    settings.OAUTH_GOOGLE_ENABLED, settings.OAUTH_GITHUB_ENABLED = original
 
 
 # ---------------------------------------------------------------------------

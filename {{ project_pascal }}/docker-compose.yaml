@@ -57,7 +57,14 @@ services:
       - app_logs:/vol/app/logs
     env_file:
       - dev.env
-    command: ["taskiq", "worker", "djast.taskiq:broker", "djast.tasks"]
+    environment:
+      # taskiq strips the working directory from sys.path once its own
+      # imports finish, so a lazy import inside a task body fails without this.
+      PYTHONPATH: /app
+    # --fs-discover imports every <app>/tasks.py. Without it only djast.tasks
+    # is loaded and app tasks are silently never registered.
+    command: ["taskiq", "worker", "djast.taskiq:broker",
+              "--fs-discover", "--tasks-pattern", "*/tasks.py", "djast.tasks"]
 
   taskiq-scheduler:
     build:
@@ -72,7 +79,10 @@ services:
       - app_logs:/vol/app/logs
     env_file:
       - dev.env
-    command: ["taskiq", "scheduler", "djast.scheduler:scheduler"]
+    environment:
+      PYTHONPATH: /app
+    command: ["taskiq", "scheduler", "djast.scheduler:scheduler",
+              "--fs-discover", "--tasks-pattern", "*/tasks.py", "djast.tasks"]
 
 volumes:
   app_static:

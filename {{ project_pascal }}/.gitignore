@@ -268,5 +268,6 @@ nginx/ssl/
 *.sqlite
 *.sqlite3
 
-migrations/
-alembic.ini
+# migrations/ and alembic.ini are deliberately NOT ignored: a production
+# deploy runs `manage.py migrate` and never `makemigrations`, so the
+# migration history has to be committed with the code.

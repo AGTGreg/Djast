@@ -9,6 +9,23 @@ from pydantic_settings import BaseSettings
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
+# Values that ship with the template and are therefore public by construction.
+# A deployment that still holds one of these signs its JWTs with a secret
+# anybody can read off GitHub -- and does so silently, because nothing breaks.
+_TEMPLATE_SECRET_KEYS = frozenset({
+    "2+^*y!+gh)!w_ef$bn#*hal2tr#1+e_&iho)&c$fjs-u1n3=j6",  # this file's default
+    "CHANGE-ME-generate-a-secret-key",                      # prod.env.example
+    "GENERATE_ME",                                          # dev.env, pre-copier
+})
+_TEMPLATE_DB_PASSWORDS = frozenset({
+    "CHANGE-ME-use-a-strong-password",                      # prod.env.example
+    "GENERATE_ME",                                          # dev.env, pre-copier
+})
+
+_GENERATE_HINT = (
+    'python -c "import secrets; print(secrets.token_urlsafe(64))"'
+)
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "{{ project_name }}"
@@ -194,6 +211,34 @@ class Settings(BaseSettings):
         if self.CORS_ALLOW_CREDENTIALS and any(origin == "*" for origin in self.CORS_ALLOW_ORIGINS):
             raise ValueError(
                 "Invalid CORS config: CORS_ALLOW_ORIGINS cannot contain '*' when CORS_ALLOW_CREDENTIALS is True."
+            )
+
+        self._reject_template_secrets()
+
+    def _reject_template_secrets(self) -> None:
+        """Refuse to start while a secret is still a value shipped by the template.
+
+        Gated on the *value*, not on whether the variable was set: a deployment
+        that deliberately re-set it to this exact string is equally compromised.
+
+        Deliberately not gated on DEBUG either. DEBUG defaults to True, so a
+        container started without an env file would skip the check -- which is
+        precisely the case worth catching.
+        """
+        if self.SECRET_KEY in _TEMPLATE_SECRET_KEYS:
+            raise ValueError(
+                "SECRET_KEY is still a value that ships with the Djast template, "
+                "so it is public. Set a unique SECRET_KEY before starting.\n"
+                f"Generate one with: {_GENERATE_HINT}"
+            )
+
+        db_password = self.DATABASES.get("default", {}).get("PASSWORD")
+        if db_password in _TEMPLATE_DB_PASSWORDS:
+            raise ValueError(
+                "DB_PASSWORD is still a value that ships with the Djast template, "
+                "so it is public. Set DB_PASSWORD and POSTGRES_PASSWORD to the "
+                "same strong value before starting.\n"
+                f"Generate one with: {_GENERATE_HINT}"
             )
 
 settings = Settings()

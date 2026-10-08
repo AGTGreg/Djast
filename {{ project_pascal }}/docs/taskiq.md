@@ -31,6 +31,41 @@ async def process_order(order_id: int) -> str:
     return f"Processed order {order_id}"
 ```
 
+### How the worker finds your tasks
+
+Taskiq registers a task when the module defining it is **imported**. The worker
+must therefore import every app's `tasks.py`, and the compose files do that with
+`--fs-discover`:
+
+```yaml
+command: ["taskiq", "worker", "djast.taskiq:broker",
+          "--fs-discover", "--tasks-pattern", "*/tasks.py", "djast.tasks"]
+```
+
+`*/tasks.py` matches one level down, which is exactly the `<app>/tasks.py`
+convention. Put a task anywhere else and it will not be registered: enqueuing
+still succeeds, the worker logs `task <module>:<name> is not found`, and the work
+never happens. Check the worker log on startup — it prints one
+`Importing tasks from module ...` line per module it found.
+
+### Lazy imports inside a task body
+
+The worker and scheduler set `PYTHONPATH=/app`. Keep it. Taskiq puts the working
+directory on `sys.path` only while its own startup imports run, then takes it
+off again, so a module that was not imported at startup cannot be resolved later:
+
+```python
+@broker.task
+async def process_order(order_id: int) -> str:
+    from catalogs.models import Product   # <- needs PYTHONPATH to resolve
+    ...
+```
+
+Without `PYTHONPATH`, that raises `ModuleNotFoundError: No module named
+'catalogs'`, the broker records the failure, and nothing visible happens. Lazy
+imports in task bodies are the normal way to avoid import cycles, so this is not
+an edge case.
+
 ### Calling Tasks from Views
 
 Use `.kiq()` to enqueue a task from an endpoint:
@@ -136,13 +171,17 @@ The `docker-compose.yaml` includes `taskiq-worker` and `taskiq-scheduler` servic
 cd app
 
 # Start a worker (processes tasks)
-taskiq worker djast.taskiq:broker djast.tasks myapp.tasks --reload
+PYTHONPATH=. taskiq worker djast.taskiq:broker \
+    --fs-discover --tasks-pattern "*/tasks.py" djast.tasks --reload
 
 # Start the scheduler (dispatches cron tasks)
-taskiq scheduler djast.scheduler:scheduler --reload
+PYTHONPATH=. taskiq scheduler djast.scheduler:scheduler \
+    --fs-discover --tasks-pattern "*/tasks.py" djast.tasks --reload
 ```
 
-Add all your app task modules to the worker command so tasks are discovered.
+`--fs-discover` means you never maintain a list of task modules by hand. Naming
+modules explicitly instead works, but a module you forget to add is a task that
+silently never runs.
 
 ### Worker CLI Flags
 
@@ -153,6 +192,13 @@ Add all your app task modules to the worker command so tasks are discovered.
 | `--reload` | Auto-reload on code changes (dev only) |
 
 ## Testing
+
+> **The test suite cannot see a broken worker.** Tests run on `InMemoryBroker`
+> inside a process that imports the application itself, so a task is always
+> registered and always importable under test. Task registration and lazy
+> imports only break where the worker is a *separate process* — that is,
+> everywhere real. After adding an app with tasks, check the worker log once:
+> `docker compose logs taskiq-worker | grep Importing`.
 
 Tests use `InMemoryBroker` which requires no Redis. The `_reset_broker()` function swaps the broker for tests:
 

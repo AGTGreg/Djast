@@ -12,7 +12,7 @@ cd Djast
 docker compose up --build
 ```
 
-API is live at `http://localhost:8000/api/v1`. Docs at `/docs`.
+API is live at `http://localhost:8001/api/v1`. Docs at `/docs`.
 
 ---
 
@@ -112,6 +112,11 @@ Apply the migrations:
 ```bash
 python manage.py migrate
 ```
+
+**Commit `migrations/` and `alembic.ini`.** A production deploy runs `migrate`
+and never `makemigrations`, so the migration history has to travel with the
+code. They are tracked by default in a generated project — do not add them to
+`.gitignore` or `.dockerignore`.
 
 ### Rename Detection
 
@@ -332,7 +337,52 @@ async def delete_post(post_id: int, session: AsyncSession = Depends(get_async_se
 
 ## 9. Test It
 
-The server auto-reloads. Open `http://localhost:8000/docs` and test your endpoints.
+The server auto-reloads. Open `http://localhost:8001/docs` and test your endpoints.
+
+---
+
+## 10. Write a Test
+
+Tests live in `<app>/tests/`. `asyncio_mode` is `auto`, so `async def test_*`
+needs no decorator. The `auth_client` fixture gives you an app, an HTTP client
+and a database session, and builds the schema from your models automatically:
+
+```python
+# myapp/tests/test_views.py
+from auth.tests.helpers import signup_and_login
+
+from myapp.models import Post
+
+
+async def test_list_posts(auth_client):
+    client, mode, session = auth_client
+    _user_id, token = await signup_and_login(client, mode)
+
+    await Post.objects(session).create(title="hello", body="world")
+
+    resp = await client.get(
+        "/api/v1/myapp/posts/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert [p["title"] for p in resp.json()] == ["hello"]
+```
+
+Run it:
+
+```bash
+python -m pytest myapp/tests -q
+```
+
+Two things to know before you write many tests:
+
+- **`AUTH_USER_MODEL_TYPE` is fixed per pytest process.** Run the suite once per
+  mode (`AUTH_USER_MODEL_TYPE=email python -m pytest`), and use the `auth_mode`
+  fixture to skip tests that only make sense in one.
+- **The default test database is in-memory SQLite.** Run against PostgreSQL with
+  `TEST_DATABASE_URL` before trusting a schema change.
+
+Full reference: [Testing](docs/testing.md).
 
 ---
 
@@ -345,6 +395,7 @@ The server auto-reloads. Open `http://localhost:8000/docs` and test your endpoin
 | `python manage.py migrate` | Apply migrations |
 | `python manage.py shell` | IPython shell |
 | `python manage.py createsuperuser` | Create an admin user |
+| `python -m pytest` | Run the test suite |
 
 **Key features:**
 - `models.Model` gives you auto table names, `id` PK, `.objects()` manager, and `.get_schema()`

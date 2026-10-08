@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from djast.db.models import Base
-from djast.settings import settings
 from djast.commands import createsuperuser
 
 
@@ -46,8 +45,11 @@ async def session(session_factory):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_create_django_superuser(session_factory, session):
+async def test_create_django_superuser(session_factory, session, auth_mode):
     """Django mode: creates user with is_superuser and is_staff True."""
+    if auth_mode != "django":
+        pytest.skip("Only runs under AUTH_USER_MODEL_TYPE=django")
+
     with patch(
         "djast.commands.createsuperuser.async_session_factory", session_factory
     ):
@@ -64,9 +66,9 @@ async def test_create_django_superuser(session_factory, session):
 
 
 @pytest.mark.asyncio
-async def test_create_email_superuser(session_factory, session):
+async def test_create_email_superuser(session_factory, session, auth_mode):
     """Email mode: creates user with is_superuser and is_staff True."""
-    if settings.AUTH_USER_MODEL_TYPE != "email":
+    if auth_mode != "email":
         pytest.skip("Only runs under AUTH_USER_MODEL_TYPE=email")
 
     with patch(
@@ -84,14 +86,18 @@ async def test_create_email_superuser(session_factory, session):
 
 
 @pytest.mark.asyncio
-async def test_create_superuser_weak_password(session_factory):
+async def test_create_superuser_weak_password(session_factory, auth_mode):
     """Weak password raises an error."""
+    identity = (
+        {"username": "admin"} if auth_mode == "django"
+        else {"email": "admin@example.com"}
+    )
     with patch(
         "djast.commands.createsuperuser.async_session_factory", session_factory
     ):
         with pytest.raises(Exception):
             await createsuperuser._create_superuser(
-                {"username": "admin", "password": "weak"}
+                {**identity, "password": "weak"}
             )
 
 

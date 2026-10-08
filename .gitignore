@@ -14,3 +14,7 @@ dist/
 build/
 .venv/
 venv/
+
+# Working notes, not part of the template
+djast-fix-plan.md
+djast-framework-repairs.md

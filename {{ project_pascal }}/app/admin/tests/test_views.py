@@ -1,15 +1,12 @@
 """Tests for admin API endpoints."""
 from __future__ import annotations
 
-import importlib
-
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.orm import clear_mappers
 
-from djast.db.models import Base
+import main
+from djast.database import get_async_session
 from djast.settings import settings
 
 from auth.tests.helpers import (
@@ -78,77 +75,22 @@ async def _create_regular_user(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest_asyncio.fixture(params=["django", "email"])
-async def admin_client(request, db_engine):
-    """Set up app with specified auth mode, return (client, mode)."""
-    mode = request.param
-    settings.AUTH_USER_MODEL_TYPE = mode
-
+@pytest_asyncio.fixture
+async def admin_client(db_session, schema, auth_mode):
+    """App + HTTP client for admin tests. Returns (client, mode)."""
     from djast.rate_limit import limiter
     limiter.enabled = False
 
-    import auth.forms
-    import auth.models
-    import auth.schemas
-    import auth.utils.auth_backend
-    import auth.utils.oauth
-    import auth.views
-    import admin.registry
-    import admin.views
-    import djast.urls
-    import main
-
-    clear_mappers()
-    Base.metadata.clear()
-
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
-    importlib.reload(auth.schemas)
-    importlib.reload(auth.utils.auth_backend)
-    importlib.reload(auth.utils.oauth)
-    importlib.reload(auth.views)
-    importlib.reload(admin.registry)
-    importlib.reload(admin.views)
-    importlib.reload(djast.urls)
-    importlib.reload(main)
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     app = main.app
-    from djast.database import get_async_session
-
-    async_session_factory = async_sessionmaker(
-        db_engine, expire_on_commit=False,
-    )
-    session = async_session_factory()
-    app.dependency_overrides[get_async_session] = lambda: session
+    app.dependency_overrides[get_async_session] = lambda: db_session
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="https://test"
     ) as c:
-        yield c, mode
+        yield c, auth_mode
 
-    await session.close()
     app.dependency_overrides.clear()
-
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    import admin.registry
-    import admin.views
-    import djast.urls
-    import main
-
-    settings.AUTH_USER_MODEL_TYPE = "django"
-    clear_mappers()
-    Base.metadata.clear()
-    importlib.reload(auth.forms)
-    importlib.reload(auth.models)
-    importlib.reload(admin.registry)
-    importlib.reload(admin.views)
-    importlib.reload(djast.urls)
-    importlib.reload(main)
+    await db_session.rollback()
 
 
 # ---------------------------------------------------------------------------

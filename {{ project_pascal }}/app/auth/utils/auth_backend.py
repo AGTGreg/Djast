@@ -2,6 +2,7 @@ import jwt
 import redis.asyncio as redis
 
 import asyncio
+import logging
 import time
 
 from typing import Annotated, Tuple
@@ -43,6 +44,8 @@ def set_refresh_cookie(response: "Response", token: str) -> None:
         path=f"{settings.APP_PREFIX}/auth",
     )
 
+
+logger = logging.getLogger(__name__)
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl=f"{settings.APP_PREFIX}/auth/token")
@@ -403,7 +406,14 @@ class TokenBlacklist:
 
             return False
 
-        except Exception:
+        except Exception as exc:
+            # Fail closed (FALLBACK_IS_BLACKLISTED defaults to True), but say so.
+            # Without this line a Redis outage rejects every valid token in
+            # production with nothing at all in the logs to explain it.
+            logger.warning(
+                "Token blacklist check failed, falling back to %s: %s",
+                settings.FALLBACK_IS_BLACKLISTED, type(exc).__name__,
+            )
             return settings.FALLBACK_IS_BLACKLISTED
 
 

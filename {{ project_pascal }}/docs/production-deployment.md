@@ -50,6 +50,11 @@ Edit `prod.env` and fill in:
 - `CORS_ALLOW_ORIGINS` — your frontend domain(s)
 - Email settings if using SMTP
 
+Nothing generates these for you — `copier copy` only fills in `dev.env`. The app
+refuses to start while `SECRET_KEY` or `DB_PASSWORD` still holds a value that
+ships with the template, so a missed edit fails loudly at boot rather than
+running on a public key. See [Security](security.md#the-app-refuses-to-start-on-a-template-secret).
+
 ### 2. Add SSL certificates
 
 Place your certificates in the `nginx/ssl/` directory:
@@ -73,6 +78,24 @@ docker compose -f docker-compose.prod.yml up --build -d
 ```bash
 docker compose -f docker-compose.prod.yml exec app python manage.py migrate
 ```
+
+**Commit your migrations.** A production deploy runs `migrate` and never
+`makemigrations`, so `migrations/` and `alembic.ini` have to be in the
+repository and in the image. Both are tracked by default in a generated project;
+if you add them to `.gitignore` or `.dockerignore`, the image ships without them.
+
+`migrate` exits non-zero when it cannot find them:
+
+```
+migrations/ directory not found.
+In a container this usually means it was excluded from the image
+(check .dockerignore) or never committed (check .gitignore).
+In a new project, run `python manage.py makemigrations` first.
+```
+
+That matters if you gate deploys on the command's exit code — a `migrate` that
+printed a message and exited 0 would tell the gate it had succeeded, and the app
+would boot against a schema that does not match the code.
 
 ### 5. Create an admin user (optional)
 
@@ -261,7 +284,7 @@ For the full security checklist, see [Security: Production Checklist](security.m
 | Aspect | Development (`docker-compose.yaml`) | Production (`docker-compose.prod.yml`) |
 |--------|--------------------------------------|----------------------------------------|
 | ASGI server | `fastapi dev` (Uvicorn with hot-reload) | Granian (2 workers, uvloop) |
-| Database | SQLite (file-based) | PostgreSQL |
+| Database | PostgreSQL (same engine as production) | PostgreSQL |
 | Code delivery | Volume mount (`./app:/app`) | Baked into Docker image (`COPY`) |
 | Reverse proxy | None (direct access on port 8001) | Nginx with SSL |
 | Static files | Served by FastAPI | Served by Nginx |

@@ -3,21 +3,22 @@ from __future__ import annotations
 
 import pytest
 import pytest_asyncio
-import importlib
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, DateTime, ForeignKey
+import enum
+
+from sqlalchemy import String, DateTime, ForeignKey, Enum as SAEnum
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import Mapped, mapped_column, clear_mappers
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from djast.db.models import Base, Model
-from djast.settings import settings
+from admin.utils.registry import ModelAdmin
+from djast.db.models import Model
 
 
 # ---------------------------------------------------------------------------
@@ -541,3 +542,51 @@ def test_non_user_write_schema_no_password(fresh_registry):
     fresh_registry.register(_TestItem, "TestApp")
     entry = fresh_registry.get_model_entry("TestApp", "_TestItem")
     assert "password" not in entry.write_schema.model_fields
+
+
+# ---------------------------------------------------------------------------
+# Enum columns
+# ---------------------------------------------------------------------------
+
+class Colour(enum.StrEnum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class _TestEnumItem(Model):
+    __tablename__ = "test_enum_item"
+
+    colour: Mapped[Colour] = mapped_column(
+        SAEnum(Colour, native_enum=False, length=16),
+        default=Colour.RED,
+    )
+
+
+def _colour_field(fresh_registry):
+    fresh_registry.register(_TestEnumItem, "TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestEnumItem")
+    return next(f for f in entry.fields if f.name == "colour")
+
+
+def test_enum_column_is_a_select(fresh_registry):
+    """An Enum column must not render as a free-text input."""
+    assert _colour_field(fresh_registry).type == "select"
+
+
+def test_enum_column_options_are_member_values(fresh_registry):
+    """Options are the values the API serialises, not the member names."""
+    assert _colour_field(fresh_registry).options == ["red", "blue"]
+
+
+def test_explicit_field_options_win_over_enum_members(fresh_registry):
+    """A hand-written field_options still overrides the derived choices."""
+    class _ColourAdmin(ModelAdmin):
+        app_name = "TestApp"
+        field_options = {"colour": ["red"]}
+
+    fresh_registry.register(_TestEnumItem, admin_class=_ColourAdmin,
+                            app_name="TestApp")
+    entry = fresh_registry.get_model_entry("TestApp", "_TestEnumItem")
+    field = next(f for f in entry.fields if f.name == "colour")
+    assert field.type == "select"
+    assert field.options == ["red"]

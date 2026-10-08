@@ -68,12 +68,12 @@ All endpoints are mounted at `{APP_PREFIX}/auth` (default: `/api/v1/auth`). Ever
 
 ```bash
 # Django mode
-curl -X POST http://localhost:8000/api/v1/auth/signup \
+curl -X POST http://localhost:8001/api/v1/auth/signup \
   -H "Content-Type: application/json" \
   -d '{"username": "alice", "password": "Secret1!xx", "email": "alice@example.com"}'
 
 # Email mode
-curl -X POST http://localhost:8000/api/v1/auth/signup \
+curl -X POST http://localhost:8001/api/v1/auth/signup \
   -H "Content-Type: application/json" \
   -d '{"email": "alice@example.com", "password": "Secret1!xx"}'
 ```
@@ -89,11 +89,11 @@ Signup can be disabled entirely by setting `ALLOW_SIGNUP=false`.
 
 ```bash
 # Django mode (OAuth2 form)
-curl -X POST http://localhost:8000/api/v1/auth/token \
+curl -X POST http://localhost:8001/api/v1/auth/token \
   -d "username=alice&password=Secret1!xx"
 
 # Email mode
-curl -X POST http://localhost:8000/api/v1/auth/token \
+curl -X POST http://localhost:8001/api/v1/auth/token \
   -d "email=alice@example.com&password=Secret1!xx"
 ```
 
@@ -109,7 +109,7 @@ The response also sets a `refresh_token` HTTP-only cookie scoped to the auth pat
 ### Refresh
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/refresh \
+curl -X POST http://localhost:8001/api/v1/auth/refresh \
   --cookie "refresh_token=eyJ..."
 ```
 
@@ -119,19 +119,19 @@ Returns a new access token and rotates the refresh cookie. Old refresh tokens ar
 
 ```bash
 # Single device
-curl -X POST http://localhost:8000/api/v1/auth/logout \
+curl -X POST http://localhost:8001/api/v1/auth/logout \
   -H "Authorization: Bearer eyJ..." \
   --cookie "refresh_token=eyJ..."
 
 # All devices
-curl -X POST http://localhost:8000/api/v1/auth/logout-all \
+curl -X POST http://localhost:8001/api/v1/auth/logout-all \
   -H "Authorization: Bearer eyJ..."
 ```
 
 ### Change Password
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/change-password \
+curl -X POST http://localhost:8001/api/v1/auth/change-password \
   -H "Authorization: Bearer eyJ..." \
   -H "Content-Type: application/json" \
   -d '{"old_password": "Secret1!xx", "new_password": "NewPass1!yy"}'
@@ -142,7 +142,7 @@ This revokes all sessions across all devices after changing the password.
 ### Current User
 
 ```bash
-curl http://localhost:8000/api/v1/auth/users/me \
+curl http://localhost:8001/api/v1/auth/users/me \
   -H "Authorization: Bearer eyJ..."
 ```
 
@@ -179,7 +179,7 @@ Verification tokens are HMAC-based (no database storage). They encode the user I
 ### Verify email
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/verify-email \
+curl -X POST http://localhost:8001/api/v1/auth/verify-email \
   -H "Content-Type: application/json" \
   -d '{"token": "the-token-from-email"}'
 ```
@@ -187,7 +187,7 @@ curl -X POST http://localhost:8000/api/v1/auth/verify-email \
 ### Resend verification email
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/resend-verification \
+curl -X POST http://localhost:8001/api/v1/auth/resend-verification \
   -H "Authorization: Bearer eyJ..."
 ```
 
@@ -211,7 +211,7 @@ The password reset flow allows users to reset their password via email. It works
 ### Request a reset
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/forgot-password \
+curl -X POST http://localhost:8001/api/v1/auth/forgot-password \
   -H "Content-Type: application/json" \
   -d '{"email": "alice@example.com"}'
 ```
@@ -226,7 +226,7 @@ This prevents user enumeration. A 5-minute cooldown between reset emails is enfo
 ### Reset the password
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/reset-password \
+curl -X POST http://localhost:8001/api/v1/auth/reset-password \
   -H "Content-Type: application/json" \
   -d '{"token": "the-token-from-email", "new_password": "NewSecure1!xx"}'
 ```
@@ -288,7 +288,7 @@ When disabled, the OAuth endpoints return 404. Existing password auth is complet
 
 ```bash
 # Step 7: Exchange the one-time code for tokens
-curl -X POST http://localhost:8000/api/v1/auth/oauth/token \
+curl -X POST http://localhost:8001/api/v1/auth/oauth/token \
   -H "Content-Type: application/json" \
   -d '{"code": "the-one-time-code"}'
 ```
@@ -311,7 +311,7 @@ A user can have multiple OAuth providers linked. Each provider is tracked in the
 Users who signed up via OAuth have no password. They can set one to enable password-based login:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/set-password \
+curl -X POST http://localhost:8001/api/v1/auth/set-password \
   -H "Authorization: Bearer eyJ..." \
   -H "Content-Type: application/json" \
   -d '{"new_password": "MyNewPass1!"}'
@@ -322,7 +322,7 @@ Controlled by `OAUTH_ALLOW_SET_PASSWORD` (default: `true`). Users who already ha
 ### Unlinking a provider
 
 ```bash
-curl -X DELETE http://localhost:8000/api/v1/auth/oauth/google/link \
+curl -X DELETE http://localhost:8001/api/v1/auth/oauth/google/link \
   -H "Authorization: Bearer eyJ..."
 ```
 
@@ -463,37 +463,24 @@ The table name is always `auth_user` regardless of model type.
 
 ## Testing
 
-Auth tests live in `app/auth/tests/` and use pytest-asyncio with in-memory SQLite:
+Auth tests live in `app/auth/tests/`. Use the shared `auth_client` fixture — it
+gives you an app, an HTTP client and a session, and manages the schema. See
+[Testing](testing.md) for the full fixture reference, and note that
+`AUTH_USER_MODEL_TYPE` is fixed per pytest process: the suite runs once per mode.
 
 ```python
-import pytest
-from httpx import ASGITransport, AsyncClient
-from main import create_app
+from auth.tests.helpers import signup_and_login
 
-@pytest.fixture
-async def client(db_session):
-    app = create_app()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
 
-@pytest.mark.asyncio
-async def test_protected_endpoint(client):
-    # Signup + login to get a token
-    await client.post("/api/v1/auth/signup", json={
-        "username": "testuser",
-        "password": "TestPass1!"
-    })
-    resp = await client.post("/api/v1/auth/token", data={
-        "username": "testuser",
-        "password": "TestPass1!"
-    })
-    token = resp.json()["access_token"]
+async def test_protected_endpoint(auth_client):
+    client, mode, _db = auth_client
 
-    # Use the token
+    # Builds the right signup/login payload for whichever mode is active.
+    _user_id, token = await signup_and_login(client, mode)
+
     resp = await client.get(
         "/api/v1/auth/users/me",
-        headers={"Authorization": f"Bearer {token}"}
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
 ```
