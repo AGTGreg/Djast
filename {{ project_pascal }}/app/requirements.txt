@@ -24,8 +24,19 @@ fastapi-mail>=1.4.0,<2.0.0
 jinja2>=3.1.0,<4.0.0
 
 # Task Queue
-taskiq[reload]>=0.12.0,<1.0.0
-taskiq-redis>=1.2.0,<2.0.0
+# Pinned pair -- do not widen one without the other.
+#
+# taskiq 0.13.0 changed taskiq.compat, which taskiq-redis imports from, so an
+# unpinned resolve pairs new taskiq with old taskiq-redis and fails at import:
+#   ImportError: cannot import name 'model_dump' from 'taskiq.compat'
+#
+# Moving forward instead is not a one-line change: taskiq-redis 1.2.4 is the
+# fix for the above, but it requires redis>=8.0.0, while this file pins
+# redis<8.0.0 (auth blacklist/lockout/OAuth state and SlowAPI's rate-limit
+# storage all use that client). Bumping redis-py across a major version is a
+# separate piece of work with its own testing.
+taskiq[reload]==0.12.1
+taskiq-redis>=1.2.0,<1.2.4
 
 # Production ASGI server
 granian>=2.7.0,<3.0.0
